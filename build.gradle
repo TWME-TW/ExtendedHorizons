@@ -58,7 +58,7 @@ dependencies {
     paperweight.paperDevBundle("1.21.8-R0.1-SNAPSHOT")
 
     // PacketEvents
-    compileOnly("com.github.retrooper:packetevents-spigot:2.10.0")
+    compileOnly("com.github.retrooper:packetevents-spigot:2.10.1")
 
     // SQLite
     implementation("org.xerial:sqlite-jdbc:3.7.2")
