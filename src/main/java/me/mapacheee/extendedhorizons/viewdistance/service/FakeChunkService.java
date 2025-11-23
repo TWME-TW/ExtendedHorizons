@@ -17,29 +17,26 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 
 import java.util.*;
 import java.util.Iterator;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /*
  *   Manages fake chunks (chunks beyond server view-distance)
  *   Optimized loading strategy:
- *   1. Memory cache (fastest) - chunks already loaded in server memory
- *   2. Disk NBT (fast) - loads existing chunks from disk without generation
- *   3. Generation (slowest) - generates new chunks only as last resort
+ *   1. PacketEvents cache (fastest) - chunks cached from intercepted packets
+ *   2. Memory cache (fast) - chunks already loaded in server memory
+ *   3. Disk loading (fast) - loads existing chunks from disk without generating
+ *   4. Generation (slowest) - generates new chunks only as last resort
  */
 @Service
 public class FakeChunkService {
@@ -50,37 +47,43 @@ public class FakeChunkService {
     private final Plugin plugin = JavaPlugin.getPlugin(ExtendedHorizonsPlugin.class);
     private final Map<UUID, Set<Long>> playerFakeChunks = new ConcurrentHashMap<>();
     private final Set<Long> generatingChunks = ConcurrentHashMap.newKeySet();
-    
+
     /**
      * Queue of chunks pending to be loaded per player
      * Used for progressive loading instead of loading all chunks at once
      */
     private final Map<UUID, Queue<Long>> playerChunkQueues = new ConcurrentHashMap<>();
-    
+
     /**
      * Tracks how many chunks have been processed this tick per player
      * Used for throttling
      */
     private final Map<UUID, Integer> playerChunksProcessedThisTick = new ConcurrentHashMap<>();
-    
+
     /**
      * Tracks last chunk position per player to detect teleports
      */
     private final Map<UUID, Long> lastChunkPosition = new ConcurrentHashMap<>();
 
+    /**
+     * Tracks when players joined to implement warm-up period
+     */
+    private final Map<UUID, Long> joinTimes = new ConcurrentHashMap<>();
+
     private static final boolean DEBUG = false;
-    
+
     // Constants for teleport detection and queue management
-    private static final int TELEPORT_DETECTION_THRESHOLD = 3; // chunks
-    private static final int QUEUE_CLEAR_DISTANCE_THRESHOLD = 8; // chunks
-    private static final int QUEUE_CLEAR_FAR_DISTANCE = 15; // chunks
-    private static final int MAX_SCHEDULED_PROCESSING_DELAY = 10; // ticks
+    private static final int TELEPORT_DETECTION_THRESHOLD = 3;
+    private static final int QUEUE_CLEAR_DISTANCE_THRESHOLD = 8;
+    private static final int QUEUE_CLEAR_FAR_DISTANCE = 15;
+    private static final int MAX_SCHEDULED_PROCESSING_DELAY = 10;
+    private static final long JOIN_WARMUP_DELAY_MS = 3000;
 
     @Inject
     public FakeChunkService(ConfigService configService, PacketChunkCacheService columnCache) {
         this.configService = configService;
         this.columnCache = columnCache;
-        
+
         int maxCacheSize = configService.get().performance().fakeChunks().maxMemoryCacheSize();
         this.chunkMemoryCache = Collections.synchronizedMap(
                 new LinkedHashMap<Long, LevelChunk>(16, 0.75f, true) {
@@ -88,44 +91,46 @@ public class FakeChunkService {
                     protected boolean removeEldestEntry(Map.Entry<Long, LevelChunk> eldest) {
                         return size() > maxCacheSize;
                     }
-                }
-        );
-        
+                });
+
         int configuredThreads = configService.get().performance().chunkProcessorThreads();
-        int threadCount = configuredThreads > 0 
-            ? configuredThreads 
-            : Math.max(4, Runtime.getRuntime().availableProcessors());
-        
+        int threadCount = configuredThreads > 0
+                ? configuredThreads
+                : Math.max(4, Runtime.getRuntime().availableProcessors());
+
         this.chunkProcessor = Executors.newFixedThreadPool(
-            threadCount,
-            r -> {
-                Thread t = new Thread(r, "EH-ChunkProcessor");
-                t.setDaemon(true);
-                t.setPriority(Thread.NORM_PRIORITY - 1);
-                return t;
-            }
-        );
-        
+                threadCount,
+                r -> {
+                    Thread t = new Thread(r, "EH-ChunkProcessor");
+                    t.setDaemon(true);
+                    t.setPriority(Thread.NORM_PRIORITY - 1);
+                    return t;
+                });
+
         startProgressiveLoadingTask();
     }
-    
+
+    public void onPlayerJoin(Player player) {
+        joinTimes.put(player.getUniqueId(), System.currentTimeMillis());
+    }
+
     /**
      * Starts a task that progressively loads chunks in batches
      */
     private void startProgressiveLoadingTask() {
         Bukkit.getScheduler().runTaskTimer(plugin, () -> {
             playerChunksProcessedThisTick.clear();
-            
+
             List<Map.Entry<UUID, Queue<Long>>> entries = new ArrayList<>(playerChunkQueues.entrySet());
-            
+
             for (Map.Entry<UUID, Queue<Long>> entry : entries) {
                 UUID playerId = entry.getKey();
                 Queue<Long> queue = entry.getValue();
-                
+
                 if (queue == null || queue.isEmpty()) {
                     continue;
                 }
-                
+
                 Player player = Bukkit.getPlayer(playerId);
                 if (player == null || !player.isOnline()) {
 
@@ -133,33 +138,36 @@ public class FakeChunkService {
                     playerChunksProcessedThisTick.remove(playerId);
                     continue;
                 }
-                
+
                 processChunkQueue(player, queue);
             }
-            
+
         }, 1L, 1L);
     }
-    
+
     /**
      * Processes a chunk queue for a player, loading chunks in batches.
      * Respects the max-chunks-per-tick limit to prevent server overload.
      * Can be called immediately or from the periodic task.
      * 
-     * @param player The player to process chunks for (must not be null and must be online)
-     * @param queue The queue of chunk keys to process (must not be null)
+     * @param player The player to process chunks for (must not be null and must be
+     *               online)
+     * @param queue  The queue of chunk keys to process (must not be null)
      */
     private void processChunkQueue(Player player, Queue<Long> queue) {
         if (player == null || !player.isOnline() || queue == null || queue.isEmpty()) {
             return;
         }
-        
+
         UUID uuid = player.getUniqueId();
         int maxChunksPerTick = configService.get().performance().maxChunksPerTick();
         int processed = playerChunksProcessedThisTick.getOrDefault(uuid, 0);
         int remaining = maxChunksPerTick - processed;
-        
-        if (remaining <= 0) { return; }
-        
+
+        if (remaining <= 0) {
+            return;
+        }
+
         List<Long> batch = new ArrayList<>();
         while (!queue.isEmpty() && batch.size() < remaining) {
             Long key = queue.poll();
@@ -167,46 +175,63 @@ public class FakeChunkService {
                 batch.add(key);
             }
         }
-        
+
         if (!batch.isEmpty()) {
             Set<Long> sentTracker = playerFakeChunks.computeIfAbsent(uuid, k -> ConcurrentHashMap.newKeySet());
             processChunkBatch(player, batch, sentTracker);
-            
+
             playerChunksProcessedThisTick.put(uuid, processed + batch.size());
-            
+
             if (DEBUG) {
-                logger.info("[EH] Processed batch of {} chunks for {} ({} remaining in queue)", 
+                logger.info("[EH] Processed batch of {} chunks for {} ({} remaining in queue)",
                         batch.size(), player.getName(), queue.size());
             }
         }
-        
+
     }
-    
+
     /**
      * Processes a batch of chunks using a three-tiered loading strategy:
      * 1. Memory cache (fastest) - checks servers internal chunk cache
      * 2. Disk NBT (fast) - loads chunk data directly from disk
      * 3. Generation (slowest) - generates new chunk if not found
      * 
-     * @param player The player to send chunks to
-     * @param batch The list of chunk keys to process
-     * @param sentTracker Set tracking which chunks have already been sent to this player
+     * @param player      The player to send chunks to
+     * @param batch       The list of chunk keys to process
+     * @param sentTracker Set tracking which chunks have already been sent to this
+     *                    player
      */
     private void processChunkBatch(Player player, List<Long> batch, Set<Long> sentTracker) {
         World world = player.getWorld();
-        
+
         for (long key : batch) {
-            if (!player.isOnline()) break;
-            
+            if (!player.isOnline())
+                break;
+
             generatingChunks.add(key);
-            
+
             int chunkX = (int) (key & 0xFFFFFFFFL);
             int chunkZ = (int) (key >> 32);
-            
+
             // Process asynchronously with optimized loading strategy
             chunkProcessor.execute(() -> {
                 try {
-                    // Strategy 1: Try to get chunk from servers memory cache
+                    // Strategy 1: Try to get chunk from PacketEvents cache
+                    Column cachedColumn = columnCache.get(chunkX, chunkZ);
+                    if (cachedColumn != null) {
+                        if (DEBUG) {
+                            logger.info("[EH] Loaded chunk {},{} from PacketEvents cache", chunkX, chunkZ);
+                        }
+                        if (sendColumnToPlayer(player, cachedColumn)) {
+                            sentTracker.add(key);
+                            generatingChunks.remove(key);
+                        } else {
+                            generatingChunks.remove(key);
+                        }
+                        return;
+                    }
+
+                    // Strategy 2: Try to get chunk from servers memory cache
                     LevelChunk memoryChunk = getChunkFromMemoryCache(world, chunkX, chunkZ);
                     if (memoryChunk != null) {
                         if (DEBUG) {
@@ -215,27 +240,10 @@ public class FakeChunkService {
                         sendChunkPacket(player, memoryChunk, key, sentTracker);
                         return;
                     }
-                    
-                    // Strategy 2: Try to load chunk NBT from disk
-                    CompoundTag chunkNBT = getChunkNBTFromDisk(world, chunkX, chunkZ);
-                    if (chunkNBT != null) {
-                        String statusStr = chunkNBT.getString("Status").orElse("");
-                        ChunkStatus status = statusStr.isEmpty() ? null : ChunkStatus.byName(statusStr);
-                        if (status != null && status.isOrAfter(ChunkStatus.FULL)) {
-                            if (DEBUG) {
-                                logger.info("[EH] Loaded chunk {},{} from disk NBT", chunkX, chunkZ);
-                            }
-                            loadChunkFromNBTAndSend(player, world, chunkX, chunkZ, chunkNBT, key, sentTracker);
-                            return;
-                        }
-                    }
-                    
-                    // Strategy 3: Generate chunk
-                    if (DEBUG) {
-                        logger.info("[EH] Generating chunk {},{} (not in cache or disk)", chunkX, chunkZ);
-                    }
-                    generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
-                    
+
+                    // Strategy 3: Try to load chunk from disk
+                    loadChunkFromDiskAndSend(player, world, chunkX, chunkZ, key, sentTracker);
+
                 } catch (Exception e) {
                     generatingChunks.remove(key);
                     logger.warn("[EH] Error loading chunk {},{}: {}", chunkX, chunkZ, e.getMessage());
@@ -263,14 +271,22 @@ public class FakeChunkService {
         if (!configService.get().performance().fakeChunks().enabled()) {
             return CompletableFuture.completedFuture(0);
         }
-        
+
+        Long joinTime = joinTimes.get(player.getUniqueId());
+        if (joinTime != null && System.currentTimeMillis() - joinTime < JOIN_WARMUP_DELAY_MS) {
+            if (DEBUG) {
+                logger.info("[EH] Skipping fake chunks for {} due to warm-up", player.getName());
+            }
+            return CompletableFuture.completedFuture(0);
+        }
+
         if (chunkKeys.isEmpty()) {
             if (DEBUG) {
                 logger.info("[EH] No fake chunks to send for {}", player.getName());
             }
             return CompletableFuture.completedFuture(0);
         }
-        
+
         if (DEBUG) {
             logger.info("[EH] sendFakeChunks called for {} with {} chunks", player.getName(), chunkKeys.size());
         }
@@ -312,26 +328,27 @@ public class FakeChunkService {
                 int z1 = (int) (key1 >> 32);
                 int x2 = (int) (key2 & 0xFFFFFFFFL);
                 int z2 = (int) (key2 >> 32);
-                
+
                 int dx1 = x1 - playerChunkX;
                 int dz1 = z1 - playerChunkZ;
                 int dx2 = x2 - playerChunkX;
                 int dz2 = z2 - playerChunkZ;
                 long dist1Squared = (long) dx1 * dx1 + (long) dz1 * dz1;
                 long dist2Squared = (long) dx2 * dx2 + (long) dz2 * dz2;
-                
+
                 return Long.compare(dist1Squared, dist2Squared);
             });
-            
-            Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid, k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
-            
+
+            Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
+                    k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
+
             if (!queue.isEmpty()) {
                 int currentChunkX = player.getLocation().getBlockX() >> 4;
                 int currentChunkZ = player.getLocation().getBlockZ() >> 4;
-                
+
                 if (shouldClearQueue(queue, currentChunkX, currentChunkZ)) {
                     if (DEBUG) {
-                        logger.info("[EH] Clearing old chunk queue for {} due to significant movement ({} chunks)", 
+                        logger.info("[EH] Clearing old chunk queue for {} due to significant movement ({} chunks)",
                                 player.getName(), queue.size());
                     }
                     queue.clear();
@@ -339,8 +356,8 @@ public class FakeChunkService {
                     generatingChunks.removeIf(key -> {
                         int chunkX = (int) (key & 0xFFFFFFFFL);
                         int chunkZ = (int) (key >> 32);
-                        double dist = Math.sqrt((chunkX - currentChunkX) * (chunkX - currentChunkX) + 
-                                                (chunkZ - currentChunkZ) * (chunkZ - currentChunkZ));
+                        double dist = Math.sqrt((chunkX - currentChunkX) * (chunkX - currentChunkX) +
+                                (chunkZ - currentChunkZ) * (chunkZ - currentChunkZ));
                         return dist > QUEUE_CLEAR_FAR_DISTANCE;
                     });
                 } else {
@@ -349,7 +366,7 @@ public class FakeChunkService {
                     }
                 }
             }
-            
+
             long currentChunkPos = ((long) playerChunkZ << 32) | (playerChunkX & 0xFFFFFFFFL);
             Long lastPos = lastChunkPosition.get(uuid);
             boolean isTeleport = false;
@@ -361,17 +378,17 @@ public class FakeChunkService {
                 isTeleport = (dx > TELEPORT_DETECTION_THRESHOLD || dz > TELEPORT_DETECTION_THRESHOLD);
             }
             lastChunkPosition.put(uuid, currentChunkPos);
-            
+
             queue.addAll(toGenerate);
-            
+
             if (DEBUG) {
-                logger.info("[EH] Added {} chunks to queue for {} (total in queue: {}, isTeleport: {})", 
+                logger.info("[EH] Added {} chunks to queue for {} (total in queue: {}, isTeleport: {})",
                         toGenerate.size(), player.getName(), queue.size(), isTeleport);
             }
-            
+
             playerChunksProcessedThisTick.remove(uuid);
             processChunkQueue(player, queue);
-            
+
             if (isTeleport || queue.size() > configService.get().performance().maxChunksPerTick()) {
 
                 for (int delay = 2; delay <= MAX_SCHEDULED_PROCESSING_DELAY; delay += 2) {
@@ -391,12 +408,12 @@ public class FakeChunkService {
         result.complete(sent);
         return result;
     }
-    
+
     /**
      * Checks if the queue should be cleared due to significant player movement.
      * Only clears if all sampled chunks are far away (like teleporting).
      * 
-     * @param queue The queue of chunk keys to check
+     * @param queue        The queue of chunk keys to check
      * @param playerChunkX The player's current chunk X coordinate
      * @param playerChunkZ The player's current chunk Z coordinate
      * @return true if the queue should be cleared (all chunks are far away)
@@ -405,26 +422,26 @@ public class FakeChunkService {
         if (queue.isEmpty()) {
             return false;
         }
-        
+
         int samples = Math.min(10, queue.size());
         Iterator<Long> it = queue.iterator();
         int farChunks = 0;
         int totalSamples = 0;
-        
+
         for (int i = 0; i < samples && it.hasNext(); i++) {
             long key = it.next();
             int chunkX = (int) (key & 0xFFFFFFFFL);
             int chunkZ = (int) (key >> 32);
-            double dist = Math.sqrt((chunkX - playerChunkX) * (chunkX - playerChunkX) + 
-                                    (chunkZ - playerChunkZ) * (chunkZ - playerChunkZ));
-            
+            double dist = Math.sqrt((chunkX - playerChunkX) * (chunkX - playerChunkX) +
+                    (chunkZ - playerChunkZ) * (chunkZ - playerChunkZ));
+
             totalSamples++;
 
             if (dist > QUEUE_CLEAR_DISTANCE_THRESHOLD) {
                 farChunks++;
             }
         }
-        
+
         return totalSamples > 0 && farChunks == totalSamples;
     }
 
@@ -449,7 +466,8 @@ public class FakeChunkService {
                     }
 
                     UUID uuid = player.getUniqueId();
-                    Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid, k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
+                    Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
+                            k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
                     queue.add(key);
                 }
             }
@@ -462,7 +480,6 @@ public class FakeChunkService {
         return sent;
     }
 
-
     /**
      * Attempts to get a chunk from the servers memory cache or our own cache
      */
@@ -470,23 +487,23 @@ public class FakeChunkService {
         if (!configService.get().performance().fakeChunks().enableMemoryCache()) {
             return null;
         }
-        
+
         long chunkKey = packChunkKey(chunkX, chunkZ);
-        
+
         synchronized (chunkMemoryCache) {
             LevelChunk cached = chunkMemoryCache.get(chunkKey);
             if (cached != null) {
                 return cached;
             }
         }
-        
+
         // Then check servers memory cache
         try {
             ServerLevel serverLevel = ((CraftWorld) world).getHandle();
-            
+
             ChunkHolder chunkHolder = serverLevel.getChunkSource().chunkMap
                     .getVisibleChunkIfPresent(chunkKey);
-            
+
             if (chunkHolder != null) {
                 LevelChunk chunk = chunkHolder.getFullChunkNow();
                 if (chunk != null && !(chunk instanceof EmptyLevelChunk)) {
@@ -501,7 +518,7 @@ public class FakeChunkService {
         }
         return null;
     }
-    
+
     /**
      * Caches a chunk in memory for reuse
      */
@@ -509,12 +526,12 @@ public class FakeChunkService {
         if (!configService.get().performance().fakeChunks().enableMemoryCache()) {
             return;
         }
-        
+
         synchronized (chunkMemoryCache) {
             chunkMemoryCache.put(chunkKey, chunk);
         }
     }
-    
+
     /**
      * Packs chunk coordinates into a long key
      */
@@ -523,92 +540,64 @@ public class FakeChunkService {
     }
 
     /**
-     * Attempts to load chunk NBT data from disk
+     * Attempts to load chunk from disk without generating
      */
-    private CompoundTag getChunkNBTFromDisk(World world, int chunkX, int chunkZ) {
-        try {
-            ServerLevel serverLevel = ((CraftWorld) world).getHandle();
-            ChunkPos chunkPos = new ChunkPos(chunkX, chunkZ);
-            
-            CompletableFuture<Optional<CompoundTag>> futureNBT = serverLevel.getChunkSource()
-                    .chunkMap.read(chunkPos);
-            
-            Optional<CompoundTag> optionalNBT = futureNBT.get();
-            return optionalNBT.orElse(null);
-            
-        } catch (InterruptedException | ExecutionException e) {
-            if (DEBUG) {
-                logger.debug("[EH] Disk NBT read failed for {},{}: {}", chunkX, chunkZ, e.getMessage());
+    private void loadChunkFromDiskAndSend(Player player, World world, int chunkX, int chunkZ,
+            long key, Set<Long> sentTracker) {
+        world.getChunkAtAsync(chunkX, chunkZ, false).thenAcceptAsync(chunk -> {
+            if (!player.isOnline()) {
+                generatingChunks.remove(key);
+                return;
             }
-            return null;
-        } catch (NoSuchMethodError | NoClassDefFoundError | Exception e) {
-            // Silently fail - method might not exist in all versions
-            if (DEBUG) {
-                logger.debug("[EH] Disk NBT lookup not available for {},{}: {}", chunkX, chunkZ, e.getMessage());
-            }
-            return null;
-        }
-    }
 
-    /**
-     * Loads a chunk from NBT data and sends it to the player
-     * This is faster than generating but requires the chunk to exist on disk
-     */
-    private void loadChunkFromNBTAndSend(Player player, World world, int chunkX, int chunkZ, 
-                                         CompoundTag chunkNBT, long key, Set<Long> sentTracker) {
-        try {
-            // Use Paper's async chunk loading - it will use the NBT data from disk
-            // Passing false means don't generate if it doesn't exist (it should exist from NBT)
-            world.getChunkAtAsync(chunkX, chunkZ, false).thenAcceptAsync(chunk -> {
-                if (!player.isOnline()) {
-                    generatingChunks.remove(key);
-                    return;
+            if (chunk == null || !chunk.isLoaded()) {
+                if (DEBUG) {
+                    logger.info("[EH] Chunk {},{} not found on disk, generating", chunkX, chunkZ);
                 }
+                generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
+                return;
+            }
 
-                try {
-                    org.bukkit.craftbukkit.CraftChunk craftChunk = (org.bukkit.craftbukkit.CraftChunk) chunk;
-                    LevelChunk nmsChunk = (LevelChunk) craftChunk.getHandle(ChunkStatus.FULL);
-                    
-                    if (nmsChunk != null) {
-                        // Cache the loaded chunk for future use
-                        long chunkKey = packChunkKey(chunkX, chunkZ);
-                        cacheChunkInMemory(chunkKey, nmsChunk);
-                        sendChunkPacket(player, nmsChunk, key, sentTracker);
-                    } else {
-                        // Fallback to generation if loading failed
-                        generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
-                    }
-                } catch (Exception e) {
+            try {
+                org.bukkit.craftbukkit.CraftChunk craftChunk = (org.bukkit.craftbukkit.CraftChunk) chunk;
+                LevelChunk nmsChunk = (LevelChunk) craftChunk.getHandle(ChunkStatus.FULL);
+
+                if (nmsChunk != null) {
                     if (DEBUG) {
-                        logger.warn("[EH] Failed to process NBT chunk {},{}, falling back to generation: {}", 
-                                chunkX, chunkZ, e.getMessage());
+                        logger.info("[EH] Loaded chunk {},{} from disk", chunkX, chunkZ);
+                    }
+                    long chunkKey = packChunkKey(chunkX, chunkZ);
+                    cacheChunkInMemory(chunkKey, nmsChunk);
+                    sendChunkPacket(player, nmsChunk, key, sentTracker);
+                } else {
+                    if (DEBUG) {
+                        logger.info("[EH] Chunk {},{} loaded but not full, generating", chunkX, chunkZ);
                     }
                     generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
                 }
-            }, chunkProcessor).exceptionally(throwable -> {
+            } catch (Exception e) {
                 if (DEBUG) {
-                    logger.warn("[EH] Failed to load chunk from NBT {},{}, falling back to generation: {}", 
-                            chunkX, chunkZ, throwable.getMessage());
+                    logger.warn("[EH] Failed to process disk chunk {},{}, falling back to generation: {}",
+                            chunkX, chunkZ, e.getMessage());
                 }
                 generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
-                return null;
-            });
-            
-        } catch (Exception e) {
+            }
+        }, chunkProcessor).exceptionally(throwable -> {
             if (DEBUG) {
-                logger.warn("[EH] Error loading chunk from NBT {},{}, falling back to generation: {}", 
-                        chunkX, chunkZ, e.getMessage());
+                logger.warn("[EH] Failed to load chunk from disk {},{}, falling back to generation: {}",
+                        chunkX, chunkZ, throwable.getMessage());
             }
             generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
-        }
+            return null;
+        });
     }
 
     /**
      * Generates a new chunk and sends it to the player
      * This is the slowest method and should be the last resort
      */
-    private void generateChunkAndSend(Player player, World world, int chunkX, int chunkZ, 
-                                      long key, Set<Long> sentTracker) {
+    private void generateChunkAndSend(Player player, World world, int chunkX, int chunkZ,
+            long key, Set<Long> sentTracker) {
         world.getChunkAtAsync(chunkX, chunkZ, true).thenAcceptAsync(chunk -> {
             if (!player.isOnline()) {
                 generatingChunks.remove(key);
@@ -620,7 +609,9 @@ public class FakeChunkService {
                 LevelChunk nmsChunk = (LevelChunk) craftChunk.getHandle(ChunkStatus.FULL);
 
                 if (nmsChunk != null) {
-                    // Cache the generated chunk for future use
+                    if (DEBUG) {
+                        logger.info("[EH] Generated chunk {},{}", chunkX, chunkZ);
+                    }
                     long chunkKey = packChunkKey(chunkX, chunkZ);
                     cacheChunkInMemory(chunkKey, nmsChunk);
                     sendChunkPacket(player, nmsChunk, key, sentTracker);
@@ -655,19 +646,17 @@ public class FakeChunkService {
             }
 
             try {
-                org.bukkit.craftbukkit.entity.CraftPlayer craftPlayer = 
-                        (org.bukkit.craftbukkit.entity.CraftPlayer) player;
+                org.bukkit.craftbukkit.entity.CraftPlayer craftPlayer = (org.bukkit.craftbukkit.entity.CraftPlayer) player;
                 net.minecraft.server.level.ServerPlayer nmsPlayer = craftPlayer.getHandle();
 
-                // Note: Constructor is deprecated but no alternative available in current Paper version
+                // Note: Constructor is deprecated but no alternative available in current Paper
+                // version
                 @SuppressWarnings("deprecation")
-                net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet =
-                        new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
-                                nmsChunk,
-                                nmsChunk.getLevel().getLightEngine(),
-                                null,
-                                null
-                        );
+                net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
+                        nmsChunk,
+                        nmsChunk.getLevel().getLightEngine(),
+                        null,
+                        null);
 
                 nmsPlayer.connection.send(packet);
 
@@ -720,7 +709,9 @@ public class FakeChunkService {
         playerFakeChunks.remove(playerId);
         playerChunkQueues.remove(playerId);
         playerChunksProcessedThisTick.remove(playerId);
+        playerChunksProcessedThisTick.remove(playerId);
         lastChunkPosition.remove(playerId);
+        joinTimes.remove(playerId);
     }
 
     /**
@@ -730,21 +721,20 @@ public class FakeChunkService {
         chunkProcessor.shutdown();
         chunkMemoryCache.clear();
     }
-    
+
     /**
      * Clears the memory cache (useful for memory management)
      */
     public void clearMemoryCache() {
         chunkMemoryCache.clear();
     }
-    
+
     /**
      * Gets the current size of the memory cache
      */
     public int getMemoryCacheSize() {
         return chunkMemoryCache.size();
     }
-
 
     public int getCacheSize() {
         return columnCache.size();
@@ -777,7 +767,7 @@ public class FakeChunkService {
      * Similar to FartherViewDistance's asyncThreadAmount approach
      */
     private final ExecutorService chunkProcessor;
-    
+
     /**
      * Cache for NMS chunks already loaded in memory
      * Reuses chunks without regenerating them

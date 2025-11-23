@@ -50,65 +50,78 @@ public class PacketInterceptionService {
 
     @OnEnable
     public void register() {
-        PacketEvents.getAPI().getEventManager().registerListener(new PacketListenerAbstract(PacketListenerPriority.NORMAL) {
-            @Override
-            public void onPacketSend(@NotNull PacketSendEvent event) {
-                if (event.getPacketType() == PacketType.Play.Server.UNLOAD_CHUNK) {
-                    Player player = (Player) event.getPlayer();
-                    if (player == null) return;
+        PacketEvents.getAPI().getEventManager()
+                .registerListener(new PacketListenerAbstract(PacketListenerPriority.NORMAL) {
+                    @Override
+                    public void onPacketSend(@NotNull PacketSendEvent event) {
+                        if (event.getPacketType() == PacketType.Play.Server.UNLOAD_CHUNK) {
+                            Player player = (Player) event.getPlayer();
+                            if (player == null)
+                                return;
 
-                    var view = viewDistanceService.getPlayerView(player.getUniqueId());
-                    if (view == null) return;
+                            var view = viewDistanceService.getPlayerView(player.getUniqueId());
+                            if (view == null)
+                                return;
 
-                    WrapperPlayServerUnloadChunk wrapper = new WrapperPlayServerUnloadChunk(event);
-                    int chunkX = wrapper.getChunkX();
-                    int chunkZ = wrapper.getChunkZ();
+                            WrapperPlayServerUnloadChunk wrapper = new WrapperPlayServerUnloadChunk(event);
+                            int chunkX = wrapper.getChunkX();
+                            int chunkZ = wrapper.getChunkZ();
 
-                    int playerChunkX = player.getLocation().getBlockX() >> 4;
-                    int playerChunkZ = player.getLocation().getBlockZ() >> 4;
-                    int dx = Math.abs(chunkX - playerChunkX);
-                    int dz = Math.abs(chunkZ - playerChunkZ);
-                    int chebyshev = Math.max(dx, dz);
+                            int playerChunkX = player.getLocation().getBlockX() >> 4;
+                            int playerChunkZ = player.getLocation().getBlockZ() >> 4;
+                            int dx = Math.abs(chunkX - playerChunkX);
+                            int dz = Math.abs(chunkZ - playerChunkZ);
+                            int chebyshev = Math.max(dx, dz);
 
-                    int margin = 1;
-                    if (chebyshev <= view.getTargetDistance() + margin) {
-                        event.setCancelled(true);
-                    }
-                } else if (event.getPacketType() == PacketType.Play.Server.UPDATE_VIEW_DISTANCE) {
-                    Player player = event.getPlayer();
-                    if (player == null) return;
-                    var view = viewDistanceService.getPlayerView(player.getUniqueId());
-                    if (view == null) return;
+                            int margin = 1;
+                            if (chebyshev <= view.getTargetDistance() + margin) {
+                                event.setCancelled(true);
+                            }
+                        } else if (event.getPacketType() == PacketType.Play.Server.UPDATE_VIEW_DISTANCE) {
+                            Player player = event.getPlayer();
+                            if (player == null)
+                                return;
 
-                    WrapperPlayServerUpdateViewDistance wrapper = new WrapperPlayServerUpdateViewDistance(event);
-                    int serverRadius = wrapper.getViewDistance();
-                    int target = view.getTargetDistance();
-                    if (serverRadius < target) {
-                        event.setCancelled(true);
-                        Bukkit.getScheduler().runTask(ExtendedHorizonsPlugin.getPlugin(ExtendedHorizonsPlugin.class), () -> {
-                            ((CraftPlayer) player).getHandle().connection.send(new ClientboundSetChunkCacheRadiusPacket(target));
-                        });
-                    }
-                } else if (event.getPacketType() == PacketType.Play.Server.CHUNK_DATA) {
-                    try {
-                        WrapperPlayServerChunkData wrapper = new WrapperPlayServerChunkData(event);
-                        Column column = wrapper.getColumn();
+                            if (player.getTicksLived() < 100)
+                                return;
 
-                        if (column == null) return;
+                            var view = viewDistanceService.getPlayerView(player.getUniqueId());
+                            if (view == null)
+                                return;
 
-                        chunkCache.put(column.getX(), column.getZ(), column);
+                            WrapperPlayServerUpdateViewDistance wrapper = new WrapperPlayServerUpdateViewDistance(
+                                    event);
+                            int serverRadius = wrapper.getViewDistance();
+                            int target = view.getTargetDistance();
+                            if (serverRadius < target) {
+                                event.setCancelled(true);
+                                Bukkit.getScheduler()
+                                        .runTask(ExtendedHorizonsPlugin.getPlugin(ExtendedHorizonsPlugin.class), () -> {
+                                            ((CraftPlayer) player).getHandle().connection
+                                                    .send(new ClientboundSetChunkCacheRadiusPacket(target));
+                                        });
+                            }
+                        } else if (event.getPacketType() == PacketType.Play.Server.CHUNK_DATA) {
+                            try {
+                                WrapperPlayServerChunkData wrapper = new WrapperPlayServerChunkData(event);
+                                Column column = wrapper.getColumn();
 
-                        if (DEBUG && chunkCache.size() % 100 == 0) {
-                            logger.info("[EH] Cached {} real chunks", chunkCache.size());
+                                if (column == null)
+                                    return;
+
+                                chunkCache.put(column.getX(), column.getZ(), column);
+
+                                if (DEBUG && chunkCache.size() % 100 == 0) {
+                                    logger.info("[EH] Cached {} real chunks", chunkCache.size());
+                                }
+                            } catch (Throwable ex) {
+                                if (DEBUG) {
+                                    logger.warn("[EH] Error intercepting chunk: {}", ex.getMessage());
+                                }
+                            }
                         }
-                    } catch (Throwable ex) {
-                        if (DEBUG) {
-                            logger.warn("[EH] Error intercepting chunk: {}", ex.getMessage());
-                        }
                     }
-                }
-            }
-        });
+                });
 
         if (DEBUG) {
             logger.info("[EH] Packet interception system registered with fake chunk support");
