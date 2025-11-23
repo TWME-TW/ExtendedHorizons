@@ -12,10 +12,8 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUp
 import com.thewinterframework.service.annotation.Service;
 import com.thewinterframework.service.annotation.lifecycle.OnEnable;
 import com.google.inject.Inject;
-import me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin;
 import me.mapacheee.extendedhorizons.viewdistance.service.ChunkPacketInterceptor;
 import me.mapacheee.extendedhorizons.viewdistance.service.ViewDistanceService;
-import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
@@ -31,21 +29,24 @@ import org.slf4j.Logger;
 @Service
 public class PacketInterceptionService {
 
-    private Logger logger;
+    private static final Logger logger = org.slf4j.LoggerFactory.getLogger(PacketInterceptionService.class);
     private final ViewDistanceService viewDistanceService;
     private final PacketChunkCacheService chunkCache;
-    @SuppressWarnings("unused") // Reserved for future use
+    @SuppressWarnings("unused")
     private final ChunkPacketInterceptor chunkPacketInterceptor;
+    private final me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService;
     private static final boolean DEBUG = false;
 
     @Inject
     public PacketInterceptionService(
             ViewDistanceService viewDistanceService,
             PacketChunkCacheService chunkCache,
-            ChunkPacketInterceptor chunkPacketInterceptor) {
+            ChunkPacketInterceptor chunkPacketInterceptor,
+            me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService) {
         this.viewDistanceService = viewDistanceService;
         this.chunkCache = chunkCache;
         this.chunkPacketInterceptor = chunkPacketInterceptor;
+        this.schedulerService = schedulerService;
     }
 
     @OnEnable
@@ -95,11 +96,10 @@ public class PacketInterceptionService {
                             int target = view.getTargetDistance();
                             if (serverRadius < target) {
                                 event.setCancelled(true);
-                                Bukkit.getScheduler()
-                                        .runTask(ExtendedHorizonsPlugin.getPlugin(ExtendedHorizonsPlugin.class), () -> {
-                                            ((CraftPlayer) player).getHandle().connection
-                                                    .send(new ClientboundSetChunkCacheRadiusPacket(target));
-                                        });
+                                schedulerService.runEntity(player, () -> {
+                                    ((CraftPlayer) player).getHandle().connection
+                                            .send(new ClientboundSetChunkCacheRadiusPacket(target));
+                                });
                             }
                         } else if (event.getPacketType() == PacketType.Play.Server.CHUNK_DATA) {
                             try {

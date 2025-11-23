@@ -4,7 +4,7 @@ import com.google.inject.Inject;
 import com.thewinterframework.service.annotation.Service;
 import com.thewinterframework.service.annotation.lifecycle.OnDisable;
 import me.mapacheee.extendedhorizons.shared.service.ConfigService;
-import org.bukkit.Bukkit;
+import me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService;
 import org.slf4j.Logger;
 
 import java.io.ByteArrayInputStream;
@@ -21,8 +21,9 @@ import java.util.zip.GZIPOutputStream;
 @Service
 public class ChunkPacketCache {
 
-    private Logger logger;
+    private static final Logger logger = org.slf4j.LoggerFactory.getLogger(ChunkPacketCache.class);
     private final ConfigService configService;
+    private final SchedulerService schedulerService;
 
     private final Map<Long, byte[]> packetCache = new ConcurrentHashMap<>();
 
@@ -33,8 +34,9 @@ public class ChunkPacketCache {
     private long totalPacketsSaved = 0;
 
     @Inject
-    public ChunkPacketCache(ConfigService configService) {
+    public ChunkPacketCache(ConfigService configService, SchedulerService schedulerService) {
         this.configService = configService;
+        this.schedulerService = schedulerService;
         startCleanupTask();
     }
 
@@ -128,7 +130,8 @@ public class ChunkPacketCache {
      * Clears old entries based on LRU
      */
     private void evictOldest() {
-        if (accessTimes.isEmpty()) return;
+        if (accessTimes.isEmpty())
+            return;
 
         Long oldestKey = accessTimes.entrySet().stream()
                 .min(Map.Entry.comparingByValue())
@@ -147,12 +150,10 @@ public class ChunkPacketCache {
     private void startCleanupTask() {
         int intervalSeconds = configService.get().performance().fakeChunks().cacheCleanupInterval();
 
-        Bukkit.getScheduler().runTaskTimerAsynchronously(
-            me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
-            this::performCleanup,
-            intervalSeconds * 20L,
-            intervalSeconds * 20L
-        );
+        schedulerService.runAsyncTimer(
+                this::performCleanup,
+                intervalSeconds * 20L,
+                intervalSeconds * 20L);
     }
 
     /**

@@ -2,6 +2,7 @@ name: ExtendedHorizons
 version: ${version}
 main: me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin
 api-version: '1.21'
+folia-supported: true
 description: ${description}
 author: Mapacheee
 website: https://github.com/mapacheee/extendedhorizons

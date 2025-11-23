@@ -5,7 +5,6 @@ import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerChunkData;
 import com.google.inject.Inject;
 import com.thewinterframework.service.annotation.Service;
-import me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin;
 import me.mapacheee.extendedhorizons.integration.packetevents.PacketChunkCacheService;
 import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import org.slf4j.Logger;
@@ -14,8 +13,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.craftbukkit.CraftWorld;
 import org.bukkit.entity.Player;
-import org.bukkit.plugin.Plugin;
-import org.bukkit.plugin.java.JavaPlugin;
 
 import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.server.level.ServerLevel;
@@ -44,7 +41,7 @@ public class FakeChunkService {
     private static final Logger logger = LoggerFactory.getLogger(FakeChunkService.class);
     private final ConfigService configService;
     private final PacketChunkCacheService columnCache;
-    private final Plugin plugin = JavaPlugin.getPlugin(ExtendedHorizonsPlugin.class);
+    private final me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService;
     private final Map<UUID, Set<Long>> playerFakeChunks = new ConcurrentHashMap<>();
     private final Set<Long> generatingChunks = ConcurrentHashMap.newKeySet();
 
@@ -80,9 +77,11 @@ public class FakeChunkService {
     private static final long JOIN_WARMUP_DELAY_MS = 3000;
 
     @Inject
-    public FakeChunkService(ConfigService configService, PacketChunkCacheService columnCache) {
+    public FakeChunkService(ConfigService configService, PacketChunkCacheService columnCache,
+            me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService) {
         this.configService = configService;
         this.columnCache = columnCache;
+        this.schedulerService = schedulerService;
 
         int maxCacheSize = configService.get().performance().fakeChunks().maxMemoryCacheSize();
         this.chunkMemoryCache = Collections.synchronizedMap(
@@ -118,7 +117,7 @@ public class FakeChunkService {
      * Starts a task that progressively loads chunks in batches
      */
     private void startProgressiveLoadingTask() {
-        Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+        schedulerService.runTimer(() -> {
             playerChunksProcessedThisTick.clear();
 
             List<Map.Entry<UUID, Queue<Long>>> entries = new ArrayList<>(playerChunkQueues.entrySet());
@@ -213,7 +212,6 @@ public class FakeChunkService {
             int chunkX = (int) (key & 0xFFFFFFFFL);
             int chunkZ = (int) (key >> 32);
 
-            // Process asynchronously with optimized loading strategy
             chunkProcessor.execute(() -> {
                 try {
                     // Strategy 1: Try to get chunk from PacketEvents cache
@@ -392,7 +390,7 @@ public class FakeChunkService {
             if (isTeleport || queue.size() > configService.get().performance().maxChunksPerTick()) {
 
                 for (int delay = 2; delay <= MAX_SCHEDULED_PROCESSING_DELAY; delay += 2) {
-                    Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                    schedulerService.runEntityLater(player, () -> {
                         if (player.isOnline()) {
                             Queue<Long> currentQueue = playerChunkQueues.get(uuid);
                             if (currentQueue != null && !currentQueue.isEmpty()) {
@@ -639,7 +637,7 @@ public class FakeChunkService {
      * This is the common method used by all loading strategies
      */
     private void sendChunkPacket(Player player, LevelChunk nmsChunk, long key, Set<Long> sentTracker) {
-        Bukkit.getScheduler().runTask(plugin, () -> {
+        schedulerService.runEntity(player, () -> {
             if (!player.isOnline()) {
                 generatingChunks.remove(key);
                 return;
@@ -764,7 +762,6 @@ public class FakeChunkService {
      * Thread pool for parallel chunk processing
      * Size is configurable via config.yml (performance.chunk-processor-threads)
      * Defaults to max(4, availableProcessors) if set to 0
-     * Similar to FartherViewDistance's asyncThreadAmount approach
      */
     private final ExecutorService chunkProcessor;
 

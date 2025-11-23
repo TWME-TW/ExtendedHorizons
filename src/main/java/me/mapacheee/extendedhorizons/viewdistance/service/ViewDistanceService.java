@@ -7,7 +7,6 @@ import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import me.mapacheee.extendedhorizons.shared.service.MessageService;
 import me.mapacheee.extendedhorizons.shared.storage.PlayerStorageService;
 import me.mapacheee.extendedhorizons.viewdistance.entity.PlayerView;
-import org.bukkit.Bukkit;
 import org.bukkit.WorldBorder;
 import org.bukkit.entity.Player;
 
@@ -30,6 +29,7 @@ public class ViewDistanceService {
     private final PacketService packetService;
     private final LuckPermsService luckPermsService;
     private final MessageService messageService;
+    private final me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService;
 
     @Inject
     public ViewDistanceService(ConfigService configService,
@@ -38,7 +38,8 @@ public class ViewDistanceService {
             FakeChunkService fakeChunkService,
             PacketService packetService,
             LuckPermsService luckPermsService,
-            MessageService messageService) {
+            MessageService messageService,
+            me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService) {
         this.configService = configService;
         this.storageService = storageService;
         this.chunkService = chunkService;
@@ -46,6 +47,7 @@ public class ViewDistanceService {
         this.packetService = packetService;
         this.luckPermsService = luckPermsService;
         this.messageService = messageService;
+        this.schedulerService = schedulerService;
     }
 
     /**
@@ -64,29 +66,26 @@ public class ViewDistanceService {
 
             packetService.ensureClientRadius(player, clamped);
 
-            Bukkit.getScheduler().runTaskLater(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin
-                    .getPlugin(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class), () -> {
-                        if (!player.isOnline())
-                            return;
-                        packetService.ensureClientRadius(player, clamped);
-                    }, 5L);
+            schedulerService.runEntityLater(player, () -> {
+                if (!player.isOnline())
+                    return;
+                packetService.ensureClientRadius(player, clamped);
+            }, 5L);
 
             var msgCfg = configService.get().messages();
             if (msgCfg != null && msgCfg.welcomeMessage() != null && msgCfg.welcomeMessage().enabled()) {
-                Bukkit.getScheduler().runTaskLater(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin
-                        .getPlugin(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class), () -> {
-                            if (player.isOnline())
-                                messageService.sendWelcome(player, clamped);
-                        }, 15L);
+                schedulerService.runEntityLater(player, () -> {
+                    if (player.isOnline())
+                        messageService.sendWelcome(player, clamped);
+                }, 15L);
             }
 
-            Bukkit.getScheduler().runTaskLater(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin
-                    .getPlugin(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class), () -> {
-                        if (!player.isOnline())
-                            return;
-                        packetService.ensureClientRadius(player, clamped);
-                        updatePlayerView(player);
-                    }, 70L);
+            schedulerService.runEntityLater(player, () -> {
+                if (!player.isOnline())
+                    return;
+                packetService.ensureClientRadius(player, clamped);
+                updatePlayerView(player);
+            }, 70L);
         });
     }
 

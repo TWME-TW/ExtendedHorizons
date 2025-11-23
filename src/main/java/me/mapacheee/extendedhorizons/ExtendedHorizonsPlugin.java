@@ -7,6 +7,8 @@ import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder
 import me.mapacheee.extendedhorizons.integration.placeholderapi.PlaceholderService;
 import me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService;
 import org.bukkit.Bukkit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /*
  * Main plugin class for ExtendedHorizons.
@@ -15,6 +17,7 @@ import org.bukkit.Bukkit;
  */
 @WinterBootPlugin
 public final class ExtendedHorizonsPlugin extends PaperWinterPlugin {
+    private static final Logger logger = LoggerFactory.getLogger(ExtendedHorizonsPlugin.class);
     private static ExtendedHorizonsPlugin instance;
 
     public static <T> T getService(Class<T> type) {
@@ -34,9 +37,8 @@ public final class ExtendedHorizonsPlugin extends PaperWinterPlugin {
         super.onPluginEnable();
         if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
             getService(PlaceholderService.class).register();
-        }
-        else {
-            getLogger().warning("PlaceholderAPI is not installed. Placeholders will not work.");
+        } else {
+            logger.warn("PlaceholderAPI is not installed. Placeholders will not work.");
         }
 
         PacketEvents.getAPI().init();
@@ -48,7 +50,7 @@ public final class ExtendedHorizonsPlugin extends PaperWinterPlugin {
         try {
             getService(FakeChunkService.class).shutdown();
         } catch (Exception e) {
-            getLogger().warning("Failed to shutdown FakeChunkService: " + e.getMessage());
+            logger.warn("Failed to shutdown FakeChunkService: " + e.getMessage());
         }
 
         super.onPluginDisable();
