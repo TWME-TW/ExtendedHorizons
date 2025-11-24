@@ -19,6 +19,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.core.SectionPos;
 
 import java.util.*;
 import java.util.Iterator;
@@ -63,13 +65,12 @@ public class FakeChunkService {
     private final Map<UUID, Long> lastChunkPosition = new ConcurrentHashMap<>();
 
     /**
-     * Tracks when players joined to implement warm-up period
+     * Tracks when players joined/teleported to implement warm-up period
      */
-    private final Map<UUID, Long> joinTimes = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> warmupStartTimes = new ConcurrentHashMap<>();
 
     private static final boolean DEBUG = false;
 
-    // Constants for teleport detection and queue management
     private static final int TELEPORT_DETECTION_THRESHOLD = 3;
     private static final int QUEUE_CLEAR_DISTANCE_THRESHOLD = 8;
     private static final int QUEUE_CLEAR_FAR_DISTANCE = 15;
@@ -110,7 +111,7 @@ public class FakeChunkService {
     }
 
     public void onPlayerJoin(Player player) {
-        joinTimes.put(player.getUniqueId(), System.currentTimeMillis());
+        warmupStartTimes.put(player.getUniqueId(), System.currentTimeMillis());
     }
 
     /**
@@ -135,6 +136,11 @@ public class FakeChunkService {
 
                     playerChunkQueues.remove(playerId);
                     playerChunksProcessedThisTick.remove(playerId);
+                    continue;
+                }
+
+                Long startTime = warmupStartTimes.get(playerId);
+                if (startTime != null && System.currentTimeMillis() - startTime < JOIN_WARMUP_DELAY_MS) {
                     continue;
                 }
 
@@ -270,14 +276,6 @@ public class FakeChunkService {
             return CompletableFuture.completedFuture(0);
         }
 
-        Long joinTime = joinTimes.get(player.getUniqueId());
-        if (joinTime != null && System.currentTimeMillis() - joinTime < JOIN_WARMUP_DELAY_MS) {
-            if (DEBUG) {
-                logger.info("[EH] Skipping fake chunks for {} due to warm-up", player.getName());
-            }
-            return CompletableFuture.completedFuture(0);
-        }
-
         if (chunkKeys.isEmpty()) {
             if (DEBUG) {
                 logger.info("[EH] No fake chunks to send for {}", player.getName());
@@ -303,6 +301,45 @@ public class FakeChunkService {
         int playerChunkX = player.getLocation().getBlockX() >> 4;
         int playerChunkZ = player.getLocation().getBlockZ() >> 4;
 
+        long currentChunkPos = ((long) playerChunkZ << 32) | (playerChunkX & 0xFFFFFFFFL);
+        Long lastPos = lastChunkPosition.get(uuid);
+        boolean isTeleport = false;
+        if (lastPos != null && lastPos != currentChunkPos) {
+            int lastChunkX = (int) (lastPos & 0xFFFFFFFFL);
+            int lastChunkZ = (int) (lastPos >> 32);
+            int dx = Math.abs(lastChunkX - playerChunkX);
+            int dz = Math.abs(lastChunkZ - playerChunkZ);
+            isTeleport = (dx > TELEPORT_DETECTION_THRESHOLD || dz > TELEPORT_DETECTION_THRESHOLD);
+        }
+        lastChunkPosition.put(uuid, currentChunkPos);
+
+        if (isTeleport) {
+            warmupStartTimes.put(uuid, System.currentTimeMillis());
+            Queue<Long> oldQueue = playerChunkQueues.get(uuid);
+            if (oldQueue != null)
+                oldQueue.clear();
+            if (DEBUG)
+                logger.info("[EH] Teleport detected for {}, starting warmup", player.getName());
+        }
+
+        Long startTime = warmupStartTimes.get(uuid);
+        boolean inWarmup = startTime != null && System.currentTimeMillis() - startTime < JOIN_WARMUP_DELAY_MS;
+
+        if (inWarmup) {
+            Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
+                    k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
+
+            for (long key : chunkKeys) {
+                if (!queue.contains(key)) {
+                    queue.add(key);
+                }
+            }
+
+            if (DEBUG)
+                logger.info("[EH] Warmup active for {}, queued {} chunks", player.getName(), chunkKeys.size());
+            return CompletableFuture.completedFuture(0);
+        }
+
         for (long key : chunkKeys) {
             if (playerSentChunks.contains(key)) {
                 continue;
@@ -318,7 +355,37 @@ public class FakeChunkService {
             }
         }
 
-        int sent = sendCachedChunks(player, toSend, playerSentChunks);
+        if (!toGenerate.isEmpty()) {
+            toGenerate.sort((key1, key2) -> {
+                int x1 = (int) (key1 & 0xFFFFFFFFL);
+                int z1 = (int) (key1 >> 32);
+                int x2 = (int) (key2 & 0xFFFFFFFFL);
+                int z2 = (int) (key2 >> 32);
+
+                int dx1 = x1 - playerChunkX;
+                int dz1 = z1 - playerChunkZ;
+                int dx2 = x2 - playerChunkX;
+                int dz2 = z2 - playerChunkZ;
+                long dist1Squared = (long) dx1 * dx1 + (long) dz1 * dz1;
+                long dist2Squared = (long) dx2 * dx2 + (long) dz2 * dz2;
+
+                return Long.compare(dist1Squared, dist2Squared);
+            });
+
+            Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
+                    k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
+
+            if (shouldClearQueue(queue, playerChunkX, playerChunkZ)) {
+                if (DEBUG)
+                    logger.info("[EH] Clearing queue due to distance threshold");
+                queue.clear();
+            }
+
+            queue.addAll(toGenerate);
+
+            playerChunksProcessedThisTick.remove(uuid);
+            processChunkQueue(player, queue);
+        }
 
         if (!toGenerate.isEmpty()) {
             toGenerate.sort((key1, key2) -> {
@@ -365,45 +432,11 @@ public class FakeChunkService {
                 }
             }
 
-            long currentChunkPos = ((long) playerChunkZ << 32) | (playerChunkX & 0xFFFFFFFFL);
-            Long lastPos = lastChunkPosition.get(uuid);
-            boolean isTeleport = false;
-            if (lastPos != null && lastPos != currentChunkPos) {
-                int lastChunkX = (int) (lastPos & 0xFFFFFFFFL);
-                int lastChunkZ = (int) (lastPos >> 32);
-                int dx = Math.abs(lastChunkX - playerChunkX);
-                int dz = Math.abs(lastChunkZ - playerChunkZ);
-                isTeleport = (dx > TELEPORT_DETECTION_THRESHOLD || dz > TELEPORT_DETECTION_THRESHOLD);
-            }
-            lastChunkPosition.put(uuid, currentChunkPos);
-
-            queue.addAll(toGenerate);
-
-            if (DEBUG) {
-                logger.info("[EH] Added {} chunks to queue for {} (total in queue: {}, isTeleport: {})",
-                        toGenerate.size(), player.getName(), queue.size(), isTeleport);
-            }
-
             playerChunksProcessedThisTick.remove(uuid);
             processChunkQueue(player, queue);
-
-            if (isTeleport || queue.size() > configService.get().performance().maxChunksPerTick()) {
-
-                for (int delay = 2; delay <= MAX_SCHEDULED_PROCESSING_DELAY; delay += 2) {
-                    schedulerService.runEntityLater(player, () -> {
-                        if (player.isOnline()) {
-                            Queue<Long> currentQueue = playerChunkQueues.get(uuid);
-                            if (currentQueue != null && !currentQueue.isEmpty()) {
-                                playerChunksProcessedThisTick.remove(uuid);
-                                processChunkQueue(player, currentQueue);
-                            }
-                        }
-                    }, delay);
-                }
-            }
         }
 
-        result.complete(sent);
+        result.complete(0);
         return result;
     }
 
@@ -444,41 +477,6 @@ public class FakeChunkService {
     }
 
     /**
-     * Sends chunks that are already in cache
-     */
-    private int sendCachedChunks(Player player, List<Long> keys, Set<Long> sentTracker) {
-        int sent = 0;
-
-        for (long key : keys) {
-            int chunkX = (int) (key & 0xFFFFFFFFL);
-            int chunkZ = (int) (key >> 32);
-
-            Column column = columnCache.get(chunkX, chunkZ);
-            if (column != null) {
-                if (sendColumnToPlayer(player, column)) {
-                    sentTracker.add(key);
-                    sent++;
-                } else {
-                    if (DEBUG) {
-                        logger.warn("[EH] Column null or invalid for {},{}, will add to queue", chunkX, chunkZ);
-                    }
-
-                    UUID uuid = player.getUniqueId();
-                    Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
-                            k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
-                    queue.add(key);
-                }
-            }
-        }
-
-        if (DEBUG) {
-            logger.info("[EH] Sent {} cached fake chunks to {}", sent, player.getName());
-        }
-
-        return sent;
-    }
-
-    /**
      * Attempts to get a chunk from the servers memory cache or our own cache
      */
     private LevelChunk getChunkFromMemoryCache(World world, int chunkX, int chunkZ) {
@@ -495,7 +493,6 @@ public class FakeChunkService {
             }
         }
 
-        // Then check servers memory cache
         try {
             ServerLevel serverLevel = ((CraftWorld) world).getHandle();
 
@@ -646,15 +643,34 @@ public class FakeChunkService {
             try {
                 org.bukkit.craftbukkit.entity.CraftPlayer craftPlayer = (org.bukkit.craftbukkit.entity.CraftPlayer) player;
                 net.minecraft.server.level.ServerPlayer nmsPlayer = craftPlayer.getHandle();
+                net.minecraft.world.level.lighting.LevelLightEngine lightEngine = nmsChunk.getLevel().getLightEngine();
+
+                java.util.BitSet skyLight = new java.util.BitSet();
+                java.util.BitSet blockLight = new java.util.BitSet();
+
+                int minSection = -4;
+                int sectionCount = nmsChunk.getSections().length;
+                int maxSection = minSection + sectionCount - 1;
+                net.minecraft.world.level.ChunkPos chunkPos = nmsChunk.getPos();
+
+                for (int i = minSection; i <= maxSection; i++) {
+                    SectionPos sectionPos = SectionPos.of(chunkPos, i);
+                    if (lightEngine.getLayerListener(LightLayer.SKY).getDataLayerData(sectionPos) != null) {
+                        skyLight.set(i - minSection);
+                    }
+                    if (lightEngine.getLayerListener(LightLayer.BLOCK).getDataLayerData(sectionPos) != null) {
+                        blockLight.set(i - minSection);
+                    }
+                }
 
                 // Note: Constructor is deprecated but no alternative available in current Paper
                 // version
                 @SuppressWarnings("deprecation")
                 net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
                         nmsChunk,
-                        nmsChunk.getLevel().getLightEngine(),
-                        null,
-                        null);
+                        lightEngine,
+                        skyLight,
+                        blockLight);
 
                 nmsPlayer.connection.send(packet);
 
@@ -670,6 +686,7 @@ public class FakeChunkService {
                 generatingChunks.remove(key);
                 if (DEBUG) {
                     logger.warn("[EH] Failed to send chunk packet: {}", e.getMessage());
+                    e.printStackTrace();
                 }
             }
         });
@@ -709,7 +726,7 @@ public class FakeChunkService {
         playerChunksProcessedThisTick.remove(playerId);
         playerChunksProcessedThisTick.remove(playerId);
         lastChunkPosition.remove(playerId);
-        joinTimes.remove(playerId);
+        warmupStartTimes.remove(playerId);
     }
 
     /**
