@@ -641,7 +641,11 @@ public class FakeChunkService {
                 org.bukkit.craftbukkit.entity.CraftPlayer craftPlayer = (org.bukkit.craftbukkit.entity.CraftPlayer) player;
                 net.minecraft.server.level.ServerPlayer nmsPlayer = craftPlayer.getHandle();
 
-                if (nmsPlayer.level() != nmsChunk.getLevel()) {
+                // Verify player is still in the same world as the chunk
+                // Use CraftWorld to avoid NMS mapping issues with ServerPlayer.level()
+                net.minecraft.server.level.ServerLevel playerLevel = ((org.bukkit.craftbukkit.CraftWorld) player
+                        .getWorld()).getHandle();
+                if (playerLevel != nmsChunk.getLevel()) {
                     generatingChunks.remove(key);
                     return;
                 }
@@ -653,14 +657,37 @@ public class FakeChunkService {
                 java.util.BitSet skyLight = lightMasks[0];
                 java.util.BitSet blockLight = lightMasks[1];
 
-                // Note: Constructor is deprecated but no alternative available in current Paper
-                // version
-                @SuppressWarnings("deprecation")
-                net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
-                        nmsChunk,
-                        lightEngine,
-                        skyLight,
-                        blockLight);
+                net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = null;
+                try {
+                    for (java.lang.reflect.Constructor<?> c : net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket.class
+                            .getConstructors()) {
+                        if (c.getParameterCount() == 4
+                                && c.getParameterTypes()[0].isAssignableFrom(nmsChunk.getClass())) {
+                            packet = (net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket) c
+                                    .newInstance(
+                                            nmsChunk,
+                                            lightEngine,
+                                            skyLight,
+                                            blockLight);
+                            break;
+                        }
+                    }
+                } catch (Exception e) {
+                    if (DEBUG)
+                        logger.error("[EH] Failed to instantiate chunk packet via reflection", e);
+                }
+
+                if (packet == null) {
+                    // Note: Constructor is deprecated but no alternative available in current Paper
+                    // version
+                    @SuppressWarnings("deprecation")
+                    net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket fallbackPacket = new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
+                            nmsChunk,
+                            lightEngine,
+                            skyLight,
+                            blockLight);
+                    packet = fallbackPacket;
+                }
 
                 nmsPlayer.connection.send(packet);
 
@@ -789,12 +816,9 @@ public class FakeChunkService {
         java.util.Map<String, me.mapacheee.extendedhorizons.shared.config.MainConfig.WorldConfig> worldSettings = configService
                 .get().worldSettings();
 
-        // If no world-specific configuration, use global setting
         if (worldSettings == null || !worldSettings.containsKey(worldName)) {
             return configService.get().performance().fakeChunks().enabled();
         }
-
-        // Use world-specific setting
         return worldSettings.get(worldName).enabled();
     }
 
