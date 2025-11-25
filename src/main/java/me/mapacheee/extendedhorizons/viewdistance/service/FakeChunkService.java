@@ -114,6 +114,18 @@ public class FakeChunkService {
     }
 
     /**
+     * Cleans up player data when they quit or change worlds
+     */
+    public void cleanupPlayer(Player player) {
+        UUID uuid = player.getUniqueId();
+        playerChunkQueues.remove(uuid);
+        playerFakeChunks.remove(uuid);
+        lastChunkPosition.remove(uuid);
+        warmupStartTimes.put(uuid, System.currentTimeMillis());
+        playerChunksProcessedThisTick.remove(uuid);
+    }
+
+    /**
      * Starts a task that progressively loads chunks in batches
      */
     private void startProgressiveLoadingTask() {
@@ -628,6 +640,12 @@ public class FakeChunkService {
             try {
                 org.bukkit.craftbukkit.entity.CraftPlayer craftPlayer = (org.bukkit.craftbukkit.entity.CraftPlayer) player;
                 net.minecraft.server.level.ServerPlayer nmsPlayer = craftPlayer.getHandle();
+
+                if (nmsPlayer.level() != nmsChunk.getLevel()) {
+                    generatingChunks.remove(key);
+                    return;
+                }
+
                 net.minecraft.world.level.lighting.LevelLightEngine lightEngine = nmsChunk.getLevel().getLightEngine();
 
                 int sectionCount = nmsChunk.getSections().length;

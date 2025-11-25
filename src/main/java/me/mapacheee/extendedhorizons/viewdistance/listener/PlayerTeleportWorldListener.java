@@ -15,51 +15,51 @@ import org.bukkit.event.player.PlayerTeleportEvent;
 public class PlayerTeleportWorldListener implements Listener {
 
     private final ViewDistanceService viewDistanceService;
+    private final me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService fakeChunkService;
 
     @Inject
-    public PlayerTeleportWorldListener(ViewDistanceService viewDistanceService) {
+    public PlayerTeleportWorldListener(ViewDistanceService viewDistanceService,
+            me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService fakeChunkService) {
         this.viewDistanceService = viewDistanceService;
+        this.fakeChunkService = fakeChunkService;
     }
 
     @EventHandler
     public void onTeleport(PlayerTeleportEvent event) {
+        // Clean up fake chunks on teleport to avoid desync
+        fakeChunkService.cleanupPlayer(event.getPlayer());
 
         org.bukkit.Bukkit.getScheduler().runTask(
-            me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
-                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class
-            ),
-            () -> {
-                if (event.getPlayer().isOnline()) {
-                    viewDistanceService.updatePlayerView(event.getPlayer());
-                    
-                    org.bukkit.Bukkit.getScheduler().runTaskLater(
-                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
-                            me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class
-                        ),
-                        () -> {
-                            if (event.getPlayer().isOnline()) {
-                                viewDistanceService.updatePlayerView(event.getPlayer());
-                            }
-                        },
-                        5L
-                    );
-                }
-            }
-        );
+                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
+                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
+                () -> {
+                    if (event.getPlayer().isOnline()) {
+                        viewDistanceService.updatePlayerView(event.getPlayer());
+
+                        org.bukkit.Bukkit.getScheduler().runTaskLater(
+                                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
+                                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
+                                () -> {
+                                    if (event.getPlayer().isOnline()) {
+                                        viewDistanceService.updatePlayerView(event.getPlayer());
+                                    }
+                                },
+                                5L);
+                    }
+                });
     }
 
     @EventHandler
     public void onWorldChange(PlayerChangedWorldEvent event) {
+        fakeChunkService.cleanupPlayer(event.getPlayer());
+
         org.bukkit.Bukkit.getScheduler().runTask(
-            me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
-                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class
-            ),
-            () -> {
-                if (event.getPlayer().isOnline()) {
-                    viewDistanceService.updatePlayerView(event.getPlayer());
-                }
-            }
-        );
+                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
+                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
+                () -> {
+                    if (event.getPlayer().isOnline()) {
+                        viewDistanceService.updatePlayerView(event.getPlayer());
+                    }
+                });
     }
 }
-
