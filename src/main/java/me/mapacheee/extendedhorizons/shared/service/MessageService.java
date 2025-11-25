@@ -29,7 +29,8 @@ public class MessageService {
     }
 
     private String preprocess(String message) {
-        if (message == null) return "";
+        if (message == null)
+            return "";
         return HEX_AMP.matcher(message).replaceAll("<#$1>");
     }
 
@@ -64,7 +65,8 @@ public class MessageService {
     }
 
     public void sendCurrentDistance(CommandSender sender, int distance) {
-        sendPrefixed(sender, configService.messages().viewDistance().currentDistance().replace("{distance}", String.valueOf(distance)));
+        sendPrefixed(sender, configService.messages().viewDistance().currentDistance().replace("{distance}",
+                String.valueOf(distance)));
     }
 
     public void sendNoViewData(CommandSender sender) {
@@ -72,19 +74,28 @@ public class MessageService {
     }
 
     public void sendDistanceChanged(CommandSender sender, int distance) {
-        sendPrefixed(sender, configService.messages().viewDistance().distanceChanged().replace("{distance}", String.valueOf(distance)));
+        sendPrefixed(sender, configService.messages().viewDistance().distanceChanged().replace("{distance}",
+                String.valueOf(distance)));
     }
 
     public void sendMinDistanceError(CommandSender sender, int min) {
-        sendPrefixed(sender, configService.messages().viewDistance().minDistanceError().replace("{min}", String.valueOf(min)));
+        sendPrefixed(sender,
+                configService.messages().viewDistance().minDistanceError().replace("{min}", String.valueOf(min)));
     }
 
     public void sendMaxDistanceExceeded(CommandSender sender, int max) {
-        sendPrefixed(sender, configService.messages().viewDistance().maxDistanceExceeded().replace("{max}", String.valueOf(max)));
+        sendPrefixed(sender,
+                configService.messages().viewDistance().maxDistanceExceeded().replace("{max}", String.valueOf(max)));
+    }
+
+    public void sendServerViewDistanceError(CommandSender sender, int serverDistance) {
+        sendPrefixed(sender, configService.messages().viewDistance().serverViewDistanceError().replace("{server}",
+                String.valueOf(serverDistance)));
     }
 
     public void sendReset(CommandSender sender, int def) {
-        sendPrefixed(sender, configService.messages().viewDistance().reset().replace("{distance}", String.valueOf(def)));
+        sendPrefixed(sender,
+                configService.messages().viewDistance().reset().replace("{distance}", String.valueOf(def)));
     }
 
     public void sendOtherCurrentDistance(CommandSender sender, String playerName, int distance) {
@@ -105,21 +116,22 @@ public class MessageService {
         sendPrefixed(sender, msg);
     }
 
-    public void sendStats(CommandSender sender, int online, int maxPlayers, int averageDistance, int cachedChunks, int maxCached, int cacheSizeMb) {
+    public void sendStats(CommandSender sender, int online, int maxPlayers, int averageDistance, int serverViewDistance,
+            int cachedFakePackets, double fakeMemoryMB, double hitRate, int legacyCache) {
         java.util.List<String> lines = configService.messages().stats();
-        if (lines == null) return;
-
-        double cacheUsagePercent = maxCached > 0 ? (cachedChunks * 100.0 / maxCached) : 0.0;
+        if (lines == null)
+            return;
 
         for (String line : lines) {
             String out = line
                     .replace("{online}", String.valueOf(online))
                     .replace("{max}", String.valueOf(maxPlayers))
                     .replace("{distance}", String.valueOf(averageDistance))
-                    .replace("{cached_chunks}", String.valueOf(cachedChunks))
-                    .replace("{max_cached}", String.valueOf(maxCached))
-                    .replace("{cache_usage}", String.format("%.1f%%", cacheUsagePercent))
-                    .replace("{size}", String.valueOf(cacheSizeMb));
+                    .replace("{server_distance}", String.valueOf(serverViewDistance))
+                    .replace("{cached_packets}", String.valueOf(cachedFakePackets))
+                    .replace("{memory_usage}", String.format("%.2f", fakeMemoryMB))
+                    .replace("{hit_rate}", String.format("%.1f%%", hitRate))
+                    .replace("{legacy_cache}", String.valueOf(legacyCache));
             sendRaw(sender, out);
         }
     }
@@ -127,23 +139,29 @@ public class MessageService {
     public void sendWorldNotFound(CommandSender sender, String world) {
         sendPrefixed(sender, configService.messages().world().notFound().replace("{world}", world));
     }
+
     public void sendWorldMaxDistanceInfo(CommandSender sender, String world, int distance) {
-        sendPrefixed(sender, configService.messages().world().maxDistanceInfo().replace("{world}", world).replace("{distance}", String.valueOf(distance)));
+        sendPrefixed(sender, configService.messages().world().maxDistanceInfo().replace("{world}", world)
+                .replace("{distance}", String.valueOf(distance)));
     }
+
     public void sendWorldUsage(CommandSender sender) {
         sendPrefixed(sender, configService.messages().world().usage());
     }
+
     public void sendWorldConfigNotice(CommandSender sender) {
         sendPrefixed(sender, configService.messages().world().configNotice());
     }
 
     public void sendHelp(CommandSender sender, boolean isAdmin) {
         List<String> lines = configService.messages().help();
-        if (lines == null) return;
+        if (lines == null)
+            return;
         for (String line : lines) {
             boolean adminLine = line.startsWith("[ADMIN]");
             if (adminLine) {
-                if (!isAdmin) continue;
+                if (!isAdmin)
+                    continue;
                 line = line.substring("[ADMIN]".length()).trim();
             }
             sendRaw(sender, line);
@@ -152,7 +170,9 @@ public class MessageService {
 
     public void sendWelcome(CommandSender sender, int distance) {
         var m = configService.messages();
-        if (m.messages() == null || m.messages().welcomeMessage() == null || m.messages().welcomeMessage().text() == null) return;
+        if (m.messages() == null || m.messages().welcomeMessage() == null
+                || m.messages().welcomeMessage().text() == null)
+            return;
         String txt = m.messages().welcomeMessage().text().replace("{distance}", String.valueOf(distance));
         sendPrefixed(sender, txt);
     }

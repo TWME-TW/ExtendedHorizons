@@ -97,8 +97,7 @@ public class ViewDistanceCommand {
         int serverViewDistance = getServerViewDistance();
         int allowedMax = viewDistanceService.getAllowedMax(player);
         if (distance < serverViewDistance) {
-            sender.sendMessage("§cError: La distancia de vista no puede ser menor al view-distance del servidor ("
-                    + serverViewDistance + ")");
+            messageService.sendServerViewDistanceError(sender, serverViewDistance);
             return;
         }
         if (distance > allowedMax) {
@@ -141,8 +140,7 @@ public class ViewDistanceCommand {
         int serverViewDistance = getServerViewDistance();
         int allowedMax = viewDistanceService.getAllowedMax(target);
         if (distance < serverViewDistance) {
-            sender.sendMessage("§cError: La distancia de vista no puede ser menor al view-distance del servidor ("
-                    + serverViewDistance + ")");
+            messageService.sendServerViewDistanceError(sender, serverViewDistance);
             return;
         }
         if (distance > allowedMax) {
@@ -191,16 +189,8 @@ public class ViewDistanceCommand {
 
         int cacheEntries = cacheService.size();
 
-        sender.sendMessage("§3========= §6ExtendedHorizons Stats §3=========");
-        sender.sendMessage("§3Players Online: §d" + online + "§3/§d" + max);
-        sender.sendMessage("§3Average Distance: §6" + avg + " §3chunks");
-        sender.sendMessage("§3Server View Distance: §6" + fakeChunkService.getServerViewDistance() + " §3chunks");
-        sender.sendMessage("§3");
-        sender.sendMessage("§3Fake Chunks Cache: §d" + cachedFakePackets + " §3packets");
-        sender.sendMessage("§3Fake Memory Usage: §6" + String.format("%.2f", fakeMemoryMB) + " MB");
-        sender.sendMessage("§3Cache Hit Rate: §6" + String.format("%.1f%%", fakeChunkService.getCacheHitRate()));
-        sender.sendMessage("§3Legacy Cache: §d" + cacheEntries);
-        sender.sendMessage("§3===========================================");
+        messageService.sendStats(sender, online, max, avg, fakeChunkService.getServerViewDistance(),
+                cachedFakePackets, fakeMemoryMB, fakeChunkService.getCacheHitRate(), cacheEntries);
     }
 
     @Command("eh|extendedhorizons|horizons|viewdistance|vd worldinfo <world>")

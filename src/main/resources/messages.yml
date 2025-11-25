@@ -24,6 +24,7 @@ view-distance:
   reset: "<#14D9D9>View distance reset to default: <#C935F2>{distance} <#14D9D9>chunks"
   max-distance-exceeded: "<#14D9D9>Maximum view distance is <#C935F2>{max} <#14D9D9>chunks!"
   min-distance-error: "<#14D9D9>Minimum view distance is <#C935F2>{min} <#14D9D9>chunks!"
+  server-view-distance-error: "<#14D9D9>View distance cannot be lower than the server's view-distance (<#C935F2>{server}<#14D9D9>)!"
   invalid-distance: "<#14D9D9>Invalid distance specified: <#C935F2>{distance}"
 
 # Statistics messages
@@ -31,8 +32,12 @@ stats:
   - "<#3498DB>========= <#F39C12>ExtendedHorizons Stats <#3498DB>========="
   - "<#3498DB>Players Online: <#C935F2>{online}<#3498DB>/<#C935F2>{max}"
   - "<#3498DB>Average Distance: <#F39C12>{distance} <#3498DB>chunks"
-  - "<#3498DB>Cached Chunks: <#C935F2>{cached_chunks}<#3498DB>/<#C935F2>{max_cached} <#F39C12>({cache_usage})"
-  - "<#3498DB>Cache Entries: <#C935F2>{size}"
+  - "<#3498DB>Server View Distance: <#F39C12>{server_distance} <#3498DB>chunks"
+  - ""
+  - "<#3498DB>Fake Chunks Cache: <#C935F2>{cached_packets} <#3498DB>packets"
+  - "<#3498DB>Fake Memory Usage: <#F39C12>{memory_usage} <#3498DB>MB"
+  - "<#3498DB>Cache Hit Rate: <#F39C12>{hit_rate}"
+  - "<#3498DB>Legacy Cache: <#C935F2>{legacy_cache}"
   - "<#3498DB>==========================================="
 
 # Error messages
@@ -85,9 +90,3 @@ startup:
 messages:
   welcome-message:
     text: "<#14D9D9>Welcome! Your view distance has been set to <#C935F2>{distance} <#14D9D9>chunks."
-
-# Additional preserved keys
-additional:
-  no-view-data: "<#14D9D9>No view data available!"
-  distance-set-other: "<#14D9D9>Set <#C935F2>{player}'s <#14D9D9>view distance to <#C9ChooseF2>{distance} <#14D9D9>chunks"
-  min-distance-error: "<#14D9D9>Minimum view distance is <#C935F2>{min} <#14D9D9>chunks!"

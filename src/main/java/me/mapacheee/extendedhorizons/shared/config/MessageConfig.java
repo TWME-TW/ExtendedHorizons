@@ -20,10 +20,11 @@ public record MessageConfig(
         Integrations integrations,
         Startup startup,
         Messages messages,
-        Additional additional
-) {
+        Additional additional) {
     @ConfigSerializable
-    public record General(String noPermission, String playerNotFound, String playerOnly, String configReloaded, String configError, String pluginInfo, String unknownCommand) {}
+    public record General(String noPermission, String playerNotFound, String playerOnly, String configReloaded,
+            String configError, String pluginInfo, String unknownCommand) {
+    }
 
     @ConfigSerializable
     public record ViewDistance(
@@ -36,27 +37,38 @@ public record MessageConfig(
             String reset,
             String maxDistanceExceeded,
             String minDistanceError,
-            String invalidDistance
-    ) {}
+            String serverViewDistanceError,
+            String invalidDistance) {
+    }
 
     @ConfigSerializable
-    public record Errors(String databaseError, String networkError, String chunkGenerationFailed, String permissionCheckFailed, String packeteventsError) {}
+    public record Errors(String databaseError, String networkError, String chunkGenerationFailed,
+            String permissionCheckFailed, String packeteventsError) {
+    }
 
     @ConfigSerializable
-    public record World(String notFound, String usage, String configNotice, String distanceSet, String disabled, String performanceModeChanged, String maxDistanceInfo) {}
+    public record World(String notFound, String usage, String configNotice, String distanceSet, String disabled,
+            String performanceModeChanged, String maxDistanceInfo) {
+    }
 
     @ConfigSerializable
-    public record Integrations(String placeholderapiEnabled, String placeholderapiDisabled, String luckpermsEnabled, String luckpermsDisabled) {}
+    public record Integrations(String placeholderapiEnabled, String placeholderapiDisabled, String luckpermsEnabled,
+            String luckpermsDisabled) {
+    }
 
     @ConfigSerializable
-    public record Startup(String loading, String loaded, String enabled, String serverDetected, String packeteventsInitialized) {}
+    public record Startup(String loading, String loaded, String enabled, String serverDetected,
+            String packeteventsInitialized) {
+    }
 
     @ConfigSerializable
     public record Messages(WelcomeMessage welcomeMessage) {
         @ConfigSerializable
-        public record WelcomeMessage(String text) {}
+        public record WelcomeMessage(String text) {
+        }
     }
 
     @ConfigSerializable
-    public record Additional(String noViewData, String distanceSetOther, String minDistanceError) {}
+    public record Additional(String noViewData, String distanceSetOther, String minDistanceError) {
+    }
 }
