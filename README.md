@@ -33,10 +33,24 @@
 
 ```yml
 # Global view distance limits and defaults
+# Note: The minimum distance is automatically set to the server's view-distance from server.properties
 view-distance:
   max-distance: 64
-  min-distance: 2
   default-distance: 32
+
+# Per-world settings (optional)
+# If a world is not listed here, it will use the global settings above
+# You can configure each world independently
+world-settings:
+  # Example: Limit view distance in the Nether
+  # world_nether:
+  #   enabled: true           # Enable/disable fake chunks for this world
+  #   max-distance: 32        # Maximum view distance for this world
+  
+  # Example: Disable fake chunks in the End
+  # world_the_end:
+  #   enabled: false
+  #   max-distance: 64
 
 # Performance settings
 performance:
