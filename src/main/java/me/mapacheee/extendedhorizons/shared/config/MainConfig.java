@@ -11,12 +11,19 @@ import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 @Configurate("config")
 public record MainConfig(
         ViewDistanceConfig viewDistance,
+        java.util.Map<String, WorldConfig> worldSettings,
         PerformanceConfig performance,
         DatabaseConfig database,
         IntegrationsConfig integrations,
         MessagesConfig messages) {
     @ConfigSerializable
     public record ViewDistanceConfig(int maxDistance, int defaultDistance) {
+    }
+
+    @ConfigSerializable
+    public record WorldConfig(
+            boolean enabled,
+            int maxDistance) {
     }
 
     @ConfigSerializable

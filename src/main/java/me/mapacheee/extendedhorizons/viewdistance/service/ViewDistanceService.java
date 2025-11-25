@@ -131,7 +131,18 @@ public class ViewDistanceService {
      * Returns allowed maximum distance for this player after LuckPerms check.
      */
     public int getAllowedMax(Player player) {
-        int configMax = configService.get().viewDistance().maxDistance();
+        String worldName = player.getWorld().getName();
+
+        java.util.Map<String, me.mapacheee.extendedhorizons.shared.config.MainConfig.WorldConfig> worldSettings = configService
+                .get().worldSettings();
+
+        int configMax;
+        if (worldSettings != null && worldSettings.containsKey(worldName)) {
+            configMax = worldSettings.get(worldName).maxDistance();
+        } else {
+            configMax = configService.get().viewDistance().maxDistance();
+        }
+
         return luckPermsService != null && luckPermsService.isEnabled()
                 ? Math.min(configMax, luckPermsService.resolveMaxDistance(player, configMax))
                 : configMax;

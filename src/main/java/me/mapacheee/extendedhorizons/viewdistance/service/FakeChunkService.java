@@ -271,6 +271,10 @@ public class FakeChunkService {
             logger.info("[EH] sendFakeChunks called for {} with {} chunks", player.getName(), chunkKeys.size());
         }
 
+        if (!isFakeChunksEnabledForWorld(player.getWorld())) {
+            return CompletableFuture.completedFuture(0);
+        }
+
         CompletableFuture<Integer> result = new CompletableFuture<>();
         UUID uuid = player.getUniqueId();
         Set<Long> playerSentChunks = playerFakeChunks.computeIfAbsent(uuid, k -> ConcurrentHashMap.newKeySet());
@@ -755,6 +759,26 @@ public class FakeChunkService {
      * Reuses chunks without regenerating them
      */
     private final Map<Long, LevelChunk> chunkMemoryCache;
+
+    /**
+     * Checks if fake chunks are enabled for a specific world
+     * 
+     * @param world The world to check
+     * @return true if fake chunks are enabled for this world
+     */
+    private boolean isFakeChunksEnabledForWorld(org.bukkit.World world) {
+        String worldName = world.getName();
+        java.util.Map<String, me.mapacheee.extendedhorizons.shared.config.MainConfig.WorldConfig> worldSettings = configService
+                .get().worldSettings();
+
+        // If no world-specific configuration, use global setting
+        if (worldSettings == null || !worldSettings.containsKey(worldName)) {
+            return configService.get().performance().fakeChunks().enabled();
+        }
+
+        // Use world-specific setting
+        return worldSettings.get(worldName).enabled();
+    }
 
     /**
      * Verifies if a chunk is inside the world border
