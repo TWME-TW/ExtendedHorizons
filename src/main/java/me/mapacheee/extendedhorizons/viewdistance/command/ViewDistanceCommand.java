@@ -38,8 +38,7 @@ public class ViewDistanceCommand {
             ConfigService configService,
             ReloadServiceManager reloadServiceManager,
             PacketChunkCacheService cacheService,
-            me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService fakeChunkService
-    ) {
+            me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService fakeChunkService) {
         this.viewDistanceService = viewDistanceService;
         this.messageService = messageService;
         this.configService = configService;
@@ -95,10 +94,11 @@ public class ViewDistanceCommand {
             messageService.sendPlayerOnly(sender);
             return;
         }
-        int min = configService.get().viewDistance().minDistance();
+        int serverViewDistance = getServerViewDistance();
         int allowedMax = viewDistanceService.getAllowedMax(player);
-        if (distance < min) {
-            messageService.sendMinDistanceError(player, min);
+        if (distance < serverViewDistance) {
+            sender.sendMessage("§cError: La distancia de vista no puede ser menor al view-distance del servidor ("
+                    + serverViewDistance + ")");
             return;
         }
         if (distance > allowedMax) {
@@ -138,10 +138,11 @@ public class ViewDistanceCommand {
     @Permission("extendedhorizons.admin")
     public void setPlayer(Source source, @Argument("player") Player target, @Argument("distance") int distance) {
         CommandSender sender = source.source();
-        int min = configService.get().viewDistance().minDistance();
+        int serverViewDistance = getServerViewDistance();
         int allowedMax = viewDistanceService.getAllowedMax(target);
-        if (distance < min) {
-            messageService.sendMinDistanceError(sender, min);
+        if (distance < serverViewDistance) {
+            sender.sendMessage("§cError: La distancia de vista no puede ser menor al view-distance del servidor ("
+                    + serverViewDistance + ")");
             return;
         }
         if (distance > allowedMax) {
@@ -221,5 +222,12 @@ public class ViewDistanceCommand {
         CommandSender sender = source.source();
         messageService.sendWorldUsage(sender);
         messageService.sendWorldConfigNotice(sender);
+    }
+
+    /**
+     * Gets the server's view distance from server.properties
+     */
+    private int getServerViewDistance() {
+        return Bukkit.getServer().getViewDistance();
     }
 }

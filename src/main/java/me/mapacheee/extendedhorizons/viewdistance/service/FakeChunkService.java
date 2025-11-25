@@ -19,8 +19,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
-import net.minecraft.world.level.LightLayer;
-import net.minecraft.core.SectionPos;
 
 import java.util.*;
 import java.util.Iterator;
@@ -74,8 +72,9 @@ public class FakeChunkService {
     private static final int TELEPORT_DETECTION_THRESHOLD = 3;
     private static final int QUEUE_CLEAR_DISTANCE_THRESHOLD = 8;
     private static final int QUEUE_CLEAR_FAR_DISTANCE = 15;
-    private static final int MAX_SCHEDULED_PROCESSING_DELAY = 10;
-    private static final long JOIN_WARMUP_DELAY_MS = 3000;
+    private static final int PROCESSING_INTERVAL_TICKS = 2;
+    private static final int MAX_CHUNKS_PER_TICK_PER_PLAYER = 10;
+    private static final long JOIN_WARMUP_DELAY_MS = 1500;
 
     @Inject
     public FakeChunkService(ConfigService configService, PacketChunkCacheService columnCache,
@@ -131,11 +130,9 @@ public class FakeChunkService {
                     continue;
                 }
 
-                Player player = Bukkit.getPlayer(playerId);
+                Player player = org.bukkit.Bukkit.getPlayer(playerId);
                 if (player == null || !player.isOnline()) {
-
                     playerChunkQueues.remove(playerId);
-                    playerChunksProcessedThisTick.remove(playerId);
                     continue;
                 }
 
@@ -147,34 +144,25 @@ public class FakeChunkService {
                 processChunkQueue(player, queue);
             }
 
-        }, 1L, 1L);
+        }, 1L, PROCESSING_INTERVAL_TICKS);
     }
 
     /**
-     * Processes a chunk queue for a player, loading chunks in batches.
-     * Respects the max-chunks-per-tick limit to prevent server overload.
-     * Can be called immediately or from the periodic task.
-     * 
-     * @param player The player to process chunks for (must not be null and must be
-     *               online)
-     * @param queue  The queue of chunk keys to process (must not be null)
+     * Processes chunk queue for a player with rate limiting
+     *
+     * @param player The player
+     * @param queue  The queue of chunks to process
      */
     private void processChunkQueue(Player player, Queue<Long> queue) {
-        if (player == null || !player.isOnline() || queue == null || queue.isEmpty()) {
+        if (!player.isOnline() || queue.isEmpty()) {
             return;
         }
 
         UUID uuid = player.getUniqueId();
-        int maxChunksPerTick = configService.get().performance().maxChunksPerTick();
-        int processed = playerChunksProcessedThisTick.getOrDefault(uuid, 0);
-        int remaining = maxChunksPerTick - processed;
-
-        if (remaining <= 0) {
-            return;
-        }
+        Set<Long> sentTracker = playerFakeChunks.computeIfAbsent(uuid, k -> ConcurrentHashMap.newKeySet());
 
         List<Long> batch = new ArrayList<>();
-        while (!queue.isEmpty() && batch.size() < remaining) {
+        while (!queue.isEmpty() && batch.size() < MAX_CHUNKS_PER_TICK_PER_PLAYER) {
             Long key = queue.poll();
             if (key != null && !generatingChunks.contains(key)) {
                 batch.add(key);
@@ -182,17 +170,13 @@ public class FakeChunkService {
         }
 
         if (!batch.isEmpty()) {
-            Set<Long> sentTracker = playerFakeChunks.computeIfAbsent(uuid, k -> ConcurrentHashMap.newKeySet());
             processChunkBatch(player, batch, sentTracker);
 
-            playerChunksProcessedThisTick.put(uuid, processed + batch.size());
-
             if (DEBUG) {
-                logger.info("[EH] Processed batch of {} chunks for {} ({} remaining in queue)",
+                logger.info("[EH] Processed {} chunks for {} ({} remaining in queue)",
                         batch.size(), player.getName(), queue.size());
             }
         }
-
     }
 
     /**
@@ -348,43 +332,15 @@ public class FakeChunkService {
             int chunkX = (int) (key & 0xFFFFFFFFL);
             int chunkZ = (int) (key >> 32);
 
+            if (!isChunkInsideWorldBorder(player, chunkX, chunkZ)) {
+                continue;
+            }
+
             if (columnCache.get(chunkX, chunkZ) != null) {
                 toSend.add(key);
             } else if (!generatingChunks.contains(key)) {
                 toGenerate.add(key);
             }
-        }
-
-        if (!toGenerate.isEmpty()) {
-            toGenerate.sort((key1, key2) -> {
-                int x1 = (int) (key1 & 0xFFFFFFFFL);
-                int z1 = (int) (key1 >> 32);
-                int x2 = (int) (key2 & 0xFFFFFFFFL);
-                int z2 = (int) (key2 >> 32);
-
-                int dx1 = x1 - playerChunkX;
-                int dz1 = z1 - playerChunkZ;
-                int dx2 = x2 - playerChunkX;
-                int dz2 = z2 - playerChunkZ;
-                long dist1Squared = (long) dx1 * dx1 + (long) dz1 * dz1;
-                long dist2Squared = (long) dx2 * dx2 + (long) dz2 * dz2;
-
-                return Long.compare(dist1Squared, dist2Squared);
-            });
-
-            Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
-                    k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
-
-            if (shouldClearQueue(queue, playerChunkX, playerChunkZ)) {
-                if (DEBUG)
-                    logger.info("[EH] Clearing queue due to distance threshold");
-                queue.clear();
-            }
-
-            queue.addAll(toGenerate);
-
-            playerChunksProcessedThisTick.remove(uuid);
-            processChunkQueue(player, queue);
         }
 
         if (!toGenerate.isEmpty()) {
@@ -431,6 +387,8 @@ public class FakeChunkService {
                     }
                 }
             }
+
+            queue.addAll(toGenerate);
 
             playerChunksProcessedThisTick.remove(uuid);
             processChunkQueue(player, queue);
@@ -630,6 +588,29 @@ public class FakeChunkService {
     }
 
     /**
+     * Cache for light BitSets to avoid recalculating them for each chunk
+     */
+    private final Map<Integer, java.util.BitSet[]> lightMaskCache = new ConcurrentHashMap<>();
+
+    /**
+     * Gets or creates light masks for a given section count
+     * Returns [skyLight, blockLight] BitSets
+     */
+    private java.util.BitSet[] getLightMasks(int sectionCount) {
+        return lightMaskCache.computeIfAbsent(sectionCount, count -> {
+            java.util.BitSet skyLight = new java.util.BitSet();
+            java.util.BitSet blockLight = new java.util.BitSet();
+
+            for (int i = 0; i < count; i++) {
+                skyLight.set(i);
+                blockLight.set(i);
+            }
+
+            return new java.util.BitSet[] { skyLight, blockLight };
+        });
+    }
+
+    /**
      * Sends a chunk packet to the player
      * This is the common method used by all loading strategies
      */
@@ -645,23 +626,10 @@ public class FakeChunkService {
                 net.minecraft.server.level.ServerPlayer nmsPlayer = craftPlayer.getHandle();
                 net.minecraft.world.level.lighting.LevelLightEngine lightEngine = nmsChunk.getLevel().getLightEngine();
 
-                java.util.BitSet skyLight = new java.util.BitSet();
-                java.util.BitSet blockLight = new java.util.BitSet();
-
-                int minSection = -4;
                 int sectionCount = nmsChunk.getSections().length;
-                int maxSection = minSection + sectionCount - 1;
-                net.minecraft.world.level.ChunkPos chunkPos = nmsChunk.getPos();
-
-                for (int i = minSection; i <= maxSection; i++) {
-                    SectionPos sectionPos = SectionPos.of(chunkPos, i);
-                    if (lightEngine.getLayerListener(LightLayer.SKY).getDataLayerData(sectionPos) != null) {
-                        skyLight.set(i - minSection);
-                    }
-                    if (lightEngine.getLayerListener(LightLayer.BLOCK).getDataLayerData(sectionPos) != null) {
-                        blockLight.set(i - minSection);
-                    }
-                }
+                java.util.BitSet[] lightMasks = getLightMasks(sectionCount);
+                java.util.BitSet skyLight = lightMasks[0];
+                java.util.BitSet blockLight = lightMasks[1];
 
                 // Note: Constructor is deprecated but no alternative available in current Paper
                 // version
@@ -787,4 +755,43 @@ public class FakeChunkService {
      * Reuses chunks without regenerating them
      */
     private final Map<Long, LevelChunk> chunkMemoryCache;
+
+    /**
+     * Verifies if a chunk is inside the world border
+     * 
+     * @param player The player whose world to check
+     * @param chunkX Chunk X coordinate
+     * @param chunkZ Chunk Z coordinate
+     * @return true if the chunk is inside the world border
+     */
+    private boolean isChunkInsideWorldBorder(Player player, int chunkX, int chunkZ) {
+        org.bukkit.WorldBorder border = player.getWorld().getWorldBorder();
+        if (border == null) {
+            return true;
+        }
+
+        double borderSize = border.getSize();
+        if (borderSize >= 5.9999968E7) {
+            return true;
+        }
+
+        double borderCenterX = border.getCenter().getX();
+        double borderCenterZ = border.getCenter().getZ();
+        double borderRadius = borderSize / 2.0;
+
+        double chunkMinX = chunkX * 16.0;
+        double chunkMaxX = chunkMinX + 16.0;
+        double chunkMinZ = chunkZ * 16.0;
+        double chunkMaxZ = chunkMinZ + 16.0;
+
+        double dx1 = Math.abs(chunkMinX - borderCenterX);
+        double dz1 = Math.abs(chunkMinZ - borderCenterZ);
+        double dx2 = Math.abs(chunkMaxX - borderCenterX);
+        double dz2 = Math.abs(chunkMaxZ - borderCenterZ);
+
+        return (dx1 <= borderRadius && dz1 <= borderRadius) ||
+                (dx2 <= borderRadius && dz2 <= borderRadius) ||
+                (dx1 <= borderRadius && dz2 <= borderRadius) ||
+                (dx2 <= borderRadius && dz1 <= borderRadius);
+    }
 }

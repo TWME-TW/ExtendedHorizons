@@ -14,17 +14,16 @@ public record MainConfig(
         PerformanceConfig performance,
         DatabaseConfig database,
         IntegrationsConfig integrations,
-        MessagesConfig messages
-) {
+        MessagesConfig messages) {
     @ConfigSerializable
-    public record ViewDistanceConfig(int maxDistance, int minDistance, int defaultDistance) {}
+    public record ViewDistanceConfig(int maxDistance, int defaultDistance) {
+    }
 
     @ConfigSerializable
     public record PerformanceConfig(
             int maxChunksPerTick,
             FakeChunksConfig fakeChunks,
-            int chunkProcessorThreads
-    ) {
+            int chunkProcessorThreads) {
         @ConfigSerializable
         public record FakeChunksConfig(
                 boolean enabled,
@@ -32,24 +31,29 @@ public record MainConfig(
                 boolean useCompression,
                 int cacheCleanupInterval,
                 boolean enableMemoryCache,
-                int maxMemoryCacheSize
-        ) {}
+                int maxMemoryCacheSize) {
+        }
     }
 
     @ConfigSerializable
-    public record DatabaseConfig(boolean enabled, String fileName) {}
+    public record DatabaseConfig(boolean enabled, String fileName) {
+    }
 
     @ConfigSerializable
     public record IntegrationsConfig(PlaceholderIntegration placeholderapi, LuckPermsIntegration luckperms) {
         @ConfigSerializable
-        public record PlaceholderIntegration(boolean enabled) {}
+        public record PlaceholderIntegration(boolean enabled) {
+        }
+
         @ConfigSerializable
-        public record LuckPermsIntegration(boolean enabled, int checkInterval, boolean useGroupPermissions) {}
+        public record LuckPermsIntegration(boolean enabled, int checkInterval, boolean useGroupPermissions) {
+        }
     }
 
     @ConfigSerializable
     public record MessagesConfig(WelcomeMessage welcomeMessage) {
         @ConfigSerializable
-        public record WelcomeMessage(boolean enabled) {}
+        public record WelcomeMessage(boolean enabled) {
+        }
     }
 }

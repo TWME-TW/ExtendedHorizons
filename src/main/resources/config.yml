@@ -10,9 +10,9 @@
 ########################################################
 
 # Global view distance limits and defaults
+# Note: The minimum distance is automatically set to the server's view-distance from server.properties
 view-distance:
   max-distance: 64
-  min-distance: 2
   default-distance: 32
 
 # Performance settings

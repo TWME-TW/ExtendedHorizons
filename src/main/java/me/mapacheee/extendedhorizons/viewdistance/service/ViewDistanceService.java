@@ -137,54 +137,12 @@ public class ViewDistanceService {
                 : configMax;
     }
 
-    /**
-     * Calculates the maximum view distance allowed based on the world border.
-     * Returns the distance from the players position to the nearest border edge.
-     * 
-     * @param player The player to check
-     * @return Maximum view distance in chunks, or Integer.MAX_VALUE if no border
-     *         restriction
-     */
-    private int getWorldBorderMaxDistance(Player player) {
-        WorldBorder border = player.getWorld().getWorldBorder();
-        if (border == null) {
-            return Integer.MAX_VALUE;
-        }
-
-        double borderSize = border.getSize();
-        double borderRadius = borderSize / 2.0;
-
-        if (borderSize >= 5.9999968E7) { // mc max world size
-            return Integer.MAX_VALUE;
-        }
-
-        double borderCenterX = border.getCenter().getX();
-        double borderCenterZ = border.getCenter().getZ();
-
-        double playerX = player.getLocation().getX();
-        double playerZ = player.getLocation().getZ();
-
-        double dx = playerX - borderCenterX;
-        double dz = playerZ - borderCenterZ;
-        double distanceToCenter = Math.sqrt(dx * dx + dz * dz);
-
-        double distanceToEdge = borderRadius - distanceToCenter;
-
-        int maxChunks = (int) Math.floor((distanceToEdge + 16) / 16.0);
-
-        int min = configService.get().viewDistance().minDistance();
-        return Math.max(min, maxChunks);
-    }
-
     private int clampDistance(Player player, int value) {
-        int min = configService.get().viewDistance().minDistance();
+        int minViewDistance = org.bukkit.Bukkit.getServer().getViewDistance();
         int max = getAllowedMax(player);
 
-        int worldBorderMax = getWorldBorderMaxDistance(player);
-        max = Math.min(max, worldBorderMax);
-
-        if (value < min)
-            return min;
+        if (value < minViewDistance)
+            return minViewDistance;
         return Math.min(value, max);
     }
 
