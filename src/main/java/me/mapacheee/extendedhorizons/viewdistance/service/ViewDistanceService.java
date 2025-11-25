@@ -30,6 +30,7 @@ public class ViewDistanceService {
     private final LuckPermsService luckPermsService;
     private final MessageService messageService;
     private final me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService;
+    private final OcclusionCullingService occlusionCullingService;
 
     @Inject
     public ViewDistanceService(ConfigService configService,
@@ -39,7 +40,8 @@ public class ViewDistanceService {
             PacketService packetService,
             LuckPermsService luckPermsService,
             MessageService messageService,
-            me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService) {
+            me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService,
+            OcclusionCullingService occlusionCullingService) {
         this.configService = configService;
         this.storageService = storageService;
         this.chunkService = chunkService;
@@ -48,6 +50,7 @@ public class ViewDistanceService {
         this.luckPermsService = luckPermsService;
         this.messageService = messageService;
         this.schedulerService = schedulerService;
+        this.occlusionCullingService = occlusionCullingService;
     }
 
     /**
@@ -55,6 +58,11 @@ public class ViewDistanceService {
      */
     public void handlePlayerJoin(Player player) {
         fakeChunkService.onPlayerJoin(player);
+
+        if (!isPluginEnabledForWorld(player.getWorld())) {
+            return;
+        }
+
         storageService.getPlayerData(player.getUniqueId()).thenAccept(playerData -> {
             int fallbackDefault = configService.get().viewDistance().defaultDistance();
             int initialDistance = playerData
@@ -115,6 +123,10 @@ public class ViewDistanceService {
             throw new IllegalArgumentException("Player must not be null and must be online");
         }
 
+        if (!isPluginEnabledForWorld(player.getWorld())) {
+            throw new IllegalStateException("ExtendedHorizons is disabled in this world");
+        }
+
         PlayerView view = playerViews.computeIfAbsent(player.getUniqueId(),
                 id -> new PlayerView(player, clampDistance(player, requestedDistance)));
         int clamped = clampDistance(player, requestedDistance);
@@ -161,8 +173,23 @@ public class ViewDistanceService {
      * Update player view when they move - DUAL SYSTEM
      */
     public void updatePlayerView(Player player) {
+        if (!player.isOnline())
+            return;
+        if (!isPluginEnabledForWorld(player.getWorld())) {
+            int serverDist = org.bukkit.Bukkit.getViewDistance();
+            packetService.ensureClientRadius(player, serverDist);
+            return;
+        }
+
+        if (occlusionCullingService.isOccluded(player)) {
+            int serverDist = org.bukkit.Bukkit.getViewDistance();
+            packetService.ensureClientRadius(player, serverDist);
+            fakeChunkService.clearPlayerFakeChunks(player);
+            return;
+        }
+
         PlayerView playerView = playerViews.get(player.getUniqueId());
-        if (playerView == null || !player.isOnline())
+        if (playerView == null)
             return;
 
         int clampedTarget = clampDistance(player, playerView.getTargetDistance());
@@ -185,8 +212,19 @@ public class ViewDistanceService {
      * Fast update for players in flight or moving fast
      */
     public void updatePlayerViewFast(Player player) {
+        if (!player.isOnline())
+            return;
+
+        if (!isPluginEnabledForWorld(player.getWorld())) {
+            return;
+        }
+
+        if (occlusionCullingService.isOccluded(player)) {
+            return;
+        }
+
         PlayerView playerView = playerViews.get(player.getUniqueId());
-        if (playerView == null || !player.isOnline())
+        if (playerView == null)
             return;
 
         int baseTarget = clampDistance(player, playerView.getTargetDistance());
@@ -286,6 +324,20 @@ public class ViewDistanceService {
             this.realChunks = realChunks;
             this.fakeChunks = fakeChunks;
         }
+    }
+
+    /**
+     * Checks if the plugin is enabled for the specific world
+     */
+    private boolean isPluginEnabledForWorld(org.bukkit.World world) {
+        String worldName = world.getName();
+        var worldSettings = configService.get().worldSettings();
+
+        if (worldSettings != null && worldSettings.containsKey(worldName)) {
+            return worldSettings.get(worldName).enabled();
+        }
+
+        return true;
     }
 
     public PlayerView getPlayerView(UUID uuid) {

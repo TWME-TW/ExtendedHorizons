@@ -26,7 +26,6 @@ public class PlayerTeleportWorldListener implements Listener {
 
     @EventHandler
     public void onTeleport(PlayerTeleportEvent event) {
-        // Clean up fake chunks on teleport to avoid desync
         fakeChunkService.cleanupPlayer(event.getPlayer());
 
         org.bukkit.Bukkit.getScheduler().runTask(
@@ -44,7 +43,7 @@ public class PlayerTeleportWorldListener implements Listener {
                                         viewDistanceService.updatePlayerView(event.getPlayer());
                                     }
                                 },
-                                5L);
+                                20L);
                     }
                 });
     }
@@ -59,6 +58,16 @@ public class PlayerTeleportWorldListener implements Listener {
                 () -> {
                     if (event.getPlayer().isOnline()) {
                         viewDistanceService.updatePlayerView(event.getPlayer());
+
+                        org.bukkit.Bukkit.getScheduler().runTaskLater(
+                                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
+                                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
+                                () -> {
+                                    if (event.getPlayer().isOnline()) {
+                                        viewDistanceService.updatePlayerView(event.getPlayer());
+                                    }
+                                },
+                                20L);
                     }
                 });
     }

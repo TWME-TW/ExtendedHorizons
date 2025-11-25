@@ -30,7 +30,8 @@ public record MainConfig(
     public record PerformanceConfig(
             int maxChunksPerTick,
             FakeChunksConfig fakeChunks,
-            int chunkProcessorThreads) {
+            int chunkProcessorThreads,
+            OcclusionCullingConfig occlusionCulling) {
         @ConfigSerializable
         public record FakeChunksConfig(
                 boolean enabled,
@@ -39,6 +40,14 @@ public record MainConfig(
                 int cacheCleanupInterval,
                 boolean enableMemoryCache,
                 int maxMemoryCacheSize) {
+        }
+
+        @ConfigSerializable
+        public record OcclusionCullingConfig(
+                boolean enabled,
+                int skyLightThreshold,
+                int maxYLevel,
+                int minYLevel) {
         }
     }
 
