@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'me.mapacheee'
-version = '2.1.4'
+version = '2.1.5'
 description = 'ExtendedHorizons - Advanced view distance extension plugin'
 
 java {
@@ -14,6 +14,13 @@ java {
 
 repositories {
     mavenCentral()
+    maven {
+        url = uri("https://repo.papermc.io/repository/maven-public/")
+    }
+    maven {
+    name = 'papermc'
+    url = 'https://repo.papermc.io/repository/maven-public/'
+  }
     maven {
         name = 'papermc-repo'
         url = 'https://repo.papermc.io/repository/maven-public/'
@@ -45,7 +52,6 @@ repositories {
 
 dependencies {
     // Winter Framework
-    implementation("com.thewinterframework:paper:1.0.4")
     api("com.thewinterframework:paper:1.0.4")
     annotationProcessor("com.thewinterframework:paper:1.0.4")
     api('com.thewinterframework:configuration:1.0.2')
@@ -54,14 +60,14 @@ dependencies {
     annotationProcessor('com.thewinterframework:command:1.0.1')
 
     // Paper API
-    compileOnly('io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT')
+    compileOnly('io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT')
     paperweight.paperDevBundle("1.21.8-R0.1-SNAPSHOT")
 
     // PacketEvents
     compileOnly("com.github.retrooper:packetevents-spigot:2.10.1")
 
     // SQLite
-    implementation("org.xerial:sqlite-jdbc:3.7.2")
+    compileOnly("org.xerial:sqlite-jdbc:3.7.2")
 
     // PlaceholderAPI
     compileOnly("me.clip:placeholderapi:2.11.6")
