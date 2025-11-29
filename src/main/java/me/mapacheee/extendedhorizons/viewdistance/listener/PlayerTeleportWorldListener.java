@@ -33,8 +33,6 @@ public class PlayerTeleportWorldListener implements Listener {
                         me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
                 () -> {
                     if (event.getPlayer().isOnline()) {
-                        viewDistanceService.updatePlayerView(event.getPlayer());
-
                         org.bukkit.Bukkit.getScheduler().runTaskLater(
                                 me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
                                         me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
@@ -43,7 +41,7 @@ public class PlayerTeleportWorldListener implements Listener {
                                         viewDistanceService.updatePlayerView(event.getPlayer());
                                     }
                                 },
-                                20L);
+                                40L);
                     }
                 });
     }
@@ -57,8 +55,6 @@ public class PlayerTeleportWorldListener implements Listener {
                         me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
                 () -> {
                     if (event.getPlayer().isOnline()) {
-                        viewDistanceService.updatePlayerView(event.getPlayer());
-
                         org.bukkit.Bukkit.getScheduler().runTaskLater(
                                 me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
                                         me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
@@ -67,7 +63,7 @@ public class PlayerTeleportWorldListener implements Listener {
                                         viewDistanceService.updatePlayerView(event.getPlayer());
                                     }
                                 },
-                                20L);
+                                40L);
                     }
                 });
     }
