@@ -20,6 +20,10 @@ public final class ExtendedHorizonsPlugin extends PaperWinterPlugin {
     private static final Logger logger = LoggerFactory.getLogger(ExtendedHorizonsPlugin.class);
     private static ExtendedHorizonsPlugin instance;
 
+    public static ExtendedHorizonsPlugin getInstance() {
+        return instance;
+    }
+
     public static <T> T getService(Class<T> type) {
         return instance.injector.getInstance(type);
     }

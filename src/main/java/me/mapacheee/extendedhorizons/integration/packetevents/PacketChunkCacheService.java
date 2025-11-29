@@ -10,7 +10,9 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerCh
 import com.thewinterframework.service.annotation.Service;
 import com.thewinterframework.service.annotation.lifecycle.OnEnable;
 import com.google.inject.Inject;
-import me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService;
+import org.bukkit.Bukkit;
+import java.util.concurrent.TimeUnit;
+import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
 
 import java.util.*;
 
@@ -25,7 +27,6 @@ public class PacketChunkCacheService {
     private static final int DEFAULT_MAX_ENTRIES = 512;
     private static final long DEFAULT_TTL_MILLIS = 300_000L;
 
-    private final SchedulerService schedulerService;
     private final int maxEntries = DEFAULT_MAX_ENTRIES;
     private final long ttlMillis = DEFAULT_TTL_MILLIS;
 
@@ -47,8 +48,7 @@ public class PacketChunkCacheService {
     });
 
     @Inject
-    public PacketChunkCacheService(SchedulerService schedulerService) {
-        this.schedulerService = schedulerService;
+    public PacketChunkCacheService() {
     }
 
     @OnEnable
@@ -66,23 +66,24 @@ public class PacketChunkCacheService {
                             if (column == null)
                                 return;
 
-                            long key = getKey(column.getX(), column.getZ());
+                            long key = ChunkUtils.packChunkKey(column.getX(), column.getZ());
                             cache.put(key, new Entry(column));
                         } catch (Throwable e) {
                         }
                     }
                 });
 
-        schedulerService.runAsyncTimer(() -> {
-            long now = System.currentTimeMillis();
-            synchronized (cache) {
-                cache.entrySet().removeIf(e -> now - e.getValue().lastAccess > ttlMillis);
-            }
-        }, 300L, 300L);
+        Bukkit.getAsyncScheduler().runAtFixedRate(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                (task) -> {
+                    long now = System.currentTimeMillis();
+                    synchronized (cache) {
+                        cache.entrySet().removeIf(e -> now - e.getValue().lastAccess > ttlMillis);
+                    }
+                }, 15L, 15L, TimeUnit.SECONDS);
     }
 
     public Column get(int x, int z) {
-        long key = getKey(x, z);
+        long key = ChunkUtils.packChunkKey(x, z);
         Entry e = cache.get(key);
         if (e == null)
             return null;
@@ -96,7 +97,7 @@ public class PacketChunkCacheService {
     }
 
     public void put(int x, int z, Column column) {
-        long key = getKey(x, z);
+        long key = ChunkUtils.packChunkKey(x, z);
         cache.put(key, new Entry(column));
     }
 
@@ -110,7 +111,4 @@ public class PacketChunkCacheService {
         }
     }
 
-    private static long getKey(int x, int z) {
-        return (long) x & 0xFFFFFFFFL | ((long) z & 0xFFFFFFFFL) << 32;
-    }
 }

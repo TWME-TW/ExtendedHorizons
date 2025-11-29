@@ -26,6 +26,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
 
 /*
  *   Manages fake chunks (chunks beyond server view-distance)
@@ -40,8 +41,7 @@ public class FakeChunkService {
 
     private static final Logger logger = LoggerFactory.getLogger(FakeChunkService.class);
     private final ConfigService configService;
-    private final PacketChunkCacheService columnCache;
-    private final me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService;
+    private final me.mapacheee.extendedhorizons.integration.packetevents.PacketChunkCacheService columnCache;
     private final Map<UUID, Set<Long>> playerFakeChunks = new ConcurrentHashMap<>();
     private final Set<Long> generatingChunks = ConcurrentHashMap.newKeySet();
 
@@ -72,16 +72,11 @@ public class FakeChunkService {
     private static final int TELEPORT_DETECTION_THRESHOLD = 3;
     private static final int QUEUE_CLEAR_DISTANCE_THRESHOLD = 8;
     private static final int QUEUE_CLEAR_FAR_DISTANCE = 15;
-    private static final int PROCESSING_INTERVAL_TICKS = 2;
-    private static final int MAX_CHUNKS_PER_TICK_PER_PLAYER = 10;
-    private static final long JOIN_WARMUP_DELAY_MS = 1500;
 
     @Inject
-    public FakeChunkService(ConfigService configService, PacketChunkCacheService columnCache,
-            me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService) {
+    public FakeChunkService(ConfigService configService, PacketChunkCacheService columnCache) {
         this.configService = configService;
         this.columnCache = columnCache;
-        this.schedulerService = schedulerService;
 
         int maxCacheSize = configService.get().performance().fakeChunks().maxMemoryCacheSize();
         this.chunkMemoryCache = Collections.synchronizedMap(
@@ -129,34 +124,36 @@ public class FakeChunkService {
      * Starts a task that progressively loads chunks in batches
      */
     private void startProgressiveLoadingTask() {
-        schedulerService.runTimer(() -> {
-            playerChunksProcessedThisTick.clear();
+        Bukkit.getGlobalRegionScheduler()
+                .runAtFixedRate(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(), (task) -> {
+                    playerChunksProcessedThisTick.clear();
 
-            List<Map.Entry<UUID, Queue<Long>>> entries = new ArrayList<>(playerChunkQueues.entrySet());
+                    List<Map.Entry<UUID, Queue<Long>>> entries = new ArrayList<>(playerChunkQueues.entrySet());
 
-            for (Map.Entry<UUID, Queue<Long>> entry : entries) {
-                UUID playerId = entry.getKey();
-                Queue<Long> queue = entry.getValue();
+                    for (Map.Entry<UUID, Queue<Long>> entry : entries) {
+                        UUID playerId = entry.getKey();
+                        Queue<Long> queue = entry.getValue();
 
-                if (queue == null || queue.isEmpty()) {
-                    continue;
-                }
+                        if (queue == null || queue.isEmpty()) {
+                            continue;
+                        }
 
-                Player player = org.bukkit.Bukkit.getPlayer(playerId);
-                if (player == null || !player.isOnline()) {
-                    playerChunkQueues.remove(playerId);
-                    continue;
-                }
+                        Player player = Bukkit.getPlayer(playerId);
+                        if (player == null || !player.isOnline()) {
+                            playerChunkQueues.remove(playerId);
+                            continue;
+                        }
 
-                Long startTime = warmupStartTimes.get(playerId);
-                if (startTime != null && System.currentTimeMillis() - startTime < JOIN_WARMUP_DELAY_MS) {
-                    continue;
-                }
+                        Long startTime = warmupStartTimes.get(playerId);
+                        long warmupDelay = configService.get().performance().teleportWarmupDelay();
+                        if (startTime != null && System.currentTimeMillis() - startTime < warmupDelay) {
+                            continue;
+                        }
 
-                processChunkQueue(player, queue);
-            }
+                        processChunkQueue(player, queue);
+                    }
 
-        }, 1L, PROCESSING_INTERVAL_TICKS);
+                }, 1L, Math.max(1, configService.get().performance().chunkProcessInterval()));
     }
 
     /**
@@ -173,8 +170,9 @@ public class FakeChunkService {
         UUID uuid = player.getUniqueId();
         Set<Long> sentTracker = playerFakeChunks.computeIfAbsent(uuid, k -> ConcurrentHashMap.newKeySet());
 
+        int maxChunks = configService.get().bandwidthSaver().maxFakeChunksPerTick();
         List<Long> batch = new ArrayList<>();
-        while (!queue.isEmpty() && batch.size() < MAX_CHUNKS_PER_TICK_PER_PLAYER) {
+        while (!queue.isEmpty() && batch.size() < maxChunks) {
             Long key = queue.poll();
             if (key != null && !generatingChunks.contains(key)) {
                 batch.add(key);
@@ -211,8 +209,8 @@ public class FakeChunkService {
 
             generatingChunks.add(key);
 
-            int chunkX = (int) (key & 0xFFFFFFFFL);
-            int chunkZ = (int) (key >> 32);
+            int chunkX = ChunkUtils.unpackX(key);
+            int chunkZ = ChunkUtils.unpackZ(key);
 
             chunkProcessor.execute(() -> {
                 try {
@@ -301,12 +299,12 @@ public class FakeChunkService {
         int playerChunkX = player.getLocation().getBlockX() >> 4;
         int playerChunkZ = player.getLocation().getBlockZ() >> 4;
 
-        long currentChunkPos = ((long) playerChunkZ << 32) | (playerChunkX & 0xFFFFFFFFL);
+        long currentChunkPos = ChunkUtils.packChunkKey(playerChunkX, playerChunkZ);
         Long lastPos = lastChunkPosition.get(uuid);
         boolean isTeleport = false;
         if (lastPos != null && lastPos != currentChunkPos) {
-            int lastChunkX = (int) (lastPos & 0xFFFFFFFFL);
-            int lastChunkZ = (int) (lastPos >> 32);
+            int lastChunkX = ChunkUtils.unpackX(lastPos);
+            int lastChunkZ = ChunkUtils.unpackZ(lastPos);
             int dx = Math.abs(lastChunkX - playerChunkX);
             int dz = Math.abs(lastChunkZ - playerChunkZ);
             isTeleport = (dx > TELEPORT_DETECTION_THRESHOLD || dz > TELEPORT_DETECTION_THRESHOLD);
@@ -323,7 +321,8 @@ public class FakeChunkService {
         }
 
         Long startTime = warmupStartTimes.get(uuid);
-        boolean inWarmup = startTime != null && System.currentTimeMillis() - startTime < JOIN_WARMUP_DELAY_MS;
+        long warmupDelay = configService.get().performance().teleportWarmupDelay();
+        boolean inWarmup = startTime != null && System.currentTimeMillis() - startTime < warmupDelay;
 
         if (inWarmup) {
             Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
@@ -345,10 +344,10 @@ public class FakeChunkService {
                 continue;
             }
 
-            int chunkX = (int) (key & 0xFFFFFFFFL);
-            int chunkZ = (int) (key >> 32);
+            int chunkX = ChunkUtils.unpackX(key);
+            int chunkZ = ChunkUtils.unpackZ(key);
 
-            if (!isChunkInsideWorldBorder(player, chunkX, chunkZ)) {
+            if (!ChunkUtils.isChunkWithinWorldBorder(player.getWorld(), chunkX, chunkZ)) {
                 continue;
             }
 
@@ -361,10 +360,10 @@ public class FakeChunkService {
 
         if (!toGenerate.isEmpty()) {
             toGenerate.sort((key1, key2) -> {
-                int x1 = (int) (key1 & 0xFFFFFFFFL);
-                int z1 = (int) (key1 >> 32);
-                int x2 = (int) (key2 & 0xFFFFFFFFL);
-                int z2 = (int) (key2 >> 32);
+                int x1 = ChunkUtils.unpackX(key1);
+                int z1 = ChunkUtils.unpackZ(key1);
+                int x2 = ChunkUtils.unpackX(key2);
+                int z2 = ChunkUtils.unpackZ(key2);
 
                 int dx1 = x1 - playerChunkX;
                 int dz1 = z1 - playerChunkZ;
@@ -391,8 +390,8 @@ public class FakeChunkService {
                     queue.clear();
 
                     generatingChunks.removeIf(key -> {
-                        int chunkX = (int) (key & 0xFFFFFFFFL);
-                        int chunkZ = (int) (key >> 32);
+                        int chunkX = ChunkUtils.unpackX(key);
+                        int chunkZ = ChunkUtils.unpackZ(key);
                         double dist = Math.sqrt((chunkX - currentChunkX) * (chunkX - currentChunkX) +
                                 (chunkZ - currentChunkZ) * (chunkZ - currentChunkZ));
                         return dist > QUEUE_CLEAR_FAR_DISTANCE;
@@ -435,8 +434,8 @@ public class FakeChunkService {
 
         for (int i = 0; i < samples && it.hasNext(); i++) {
             long key = it.next();
-            int chunkX = (int) (key & 0xFFFFFFFFL);
-            int chunkZ = (int) (key >> 32);
+            int chunkX = ChunkUtils.unpackX(key);
+            int chunkZ = ChunkUtils.unpackZ(key);
             double dist = Math.sqrt((chunkX - playerChunkX) * (chunkX - playerChunkX) +
                     (chunkZ - playerChunkZ) * (chunkZ - playerChunkZ));
 
@@ -458,7 +457,7 @@ public class FakeChunkService {
             return null;
         }
 
-        long chunkKey = packChunkKey(chunkX, chunkZ);
+        long chunkKey = ChunkUtils.packChunkKey(chunkX, chunkZ);
 
         synchronized (chunkMemoryCache) {
             LevelChunk cached = chunkMemoryCache.get(chunkKey);
@@ -502,13 +501,6 @@ public class FakeChunkService {
     }
 
     /**
-     * Packs chunk coordinates into a long key
-     */
-    private static long packChunkKey(int x, int z) {
-        return ((long) z << 32) | ((long) x & 0xFFFFFFFFL);
-    }
-
-    /**
      * Attempts to load chunk from disk without generating
      */
     private void loadChunkFromDiskAndSend(Player player, World world, int chunkX, int chunkZ,
@@ -535,7 +527,7 @@ public class FakeChunkService {
                     if (DEBUG) {
                         logger.info("[EH] Loaded chunk {},{} from disk", chunkX, chunkZ);
                     }
-                    long chunkKey = packChunkKey(chunkX, chunkZ);
+                    long chunkKey = ChunkUtils.packChunkKey(chunkX, chunkZ);
                     cacheChunkInMemory(chunkKey, nmsChunk);
                     sendChunkPacket(player, nmsChunk, key, sentTracker);
                 } else {
@@ -581,7 +573,7 @@ public class FakeChunkService {
                     if (DEBUG) {
                         logger.info("[EH] Generated chunk {},{}", chunkX, chunkZ);
                     }
-                    long chunkKey = packChunkKey(chunkX, chunkZ);
+                    long chunkKey = ChunkUtils.packChunkKey(chunkX, chunkZ);
                     cacheChunkInMemory(chunkKey, nmsChunk);
                     sendChunkPacket(player, nmsChunk, key, sentTracker);
                 } else {
@@ -631,7 +623,7 @@ public class FakeChunkService {
      * This is the common method used by all loading strategies
      */
     private void sendChunkPacket(Player player, LevelChunk nmsChunk, long key, Set<Long> sentTracker) {
-        schedulerService.runEntity(player, () -> {
+        player.getScheduler().run(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(), (task) -> {
             if (!player.isOnline()) {
                 generatingChunks.remove(key);
                 return;
@@ -641,8 +633,6 @@ public class FakeChunkService {
                 org.bukkit.craftbukkit.entity.CraftPlayer craftPlayer = (org.bukkit.craftbukkit.entity.CraftPlayer) player;
                 net.minecraft.server.level.ServerPlayer nmsPlayer = craftPlayer.getHandle();
 
-                // Verify player is still in the same world as the chunk
-                // Use CraftWorld to avoid NMS mapping issues with ServerPlayer.level()
                 net.minecraft.server.level.ServerLevel playerLevel = ((org.bukkit.craftbukkit.CraftWorld) player
                         .getWorld()).getHandle();
                 if (playerLevel != nmsChunk.getLevel()) {
@@ -695,8 +685,8 @@ public class FakeChunkService {
                 generatingChunks.remove(key);
 
                 if (DEBUG) {
-                    int chunkX = (int) (key & 0xFFFFFFFFL);
-                    int chunkZ = (int) (key >> 32);
+                    int chunkX = ChunkUtils.unpackX(key);
+                    int chunkZ = ChunkUtils.unpackZ(key);
                     logger.info("[EH] Sent fake chunk {},{} to {}", chunkX, chunkZ, player.getName());
                 }
             } catch (Exception e) {
@@ -706,7 +696,7 @@ public class FakeChunkService {
                     e.printStackTrace();
                 }
             }
-        });
+        }, null);
     }
 
     /**
@@ -778,8 +768,8 @@ public class FakeChunkService {
         for (Set<Long> chunks : playerFakeChunks.values()) {
             total += chunks.size();
             for (long key : chunks) {
-                int chunkX = (int) (key & 0xFFFFFFFFL);
-                int chunkZ = (int) (key >> 32);
+                int chunkX = ChunkUtils.unpackX(key);
+                int chunkZ = ChunkUtils.unpackZ(key);
                 if (columnCache.get(chunkX, chunkZ) != null) {
                     hits++;
                 }
@@ -820,44 +810,5 @@ public class FakeChunkService {
             return configService.get().performance().fakeChunks().enabled();
         }
         return worldSettings.get(worldName).enabled();
-    }
-
-    /**
-     * Verifies if a chunk is inside the world border
-     * 
-     * @param player The player whose world to check
-     * @param chunkX Chunk X coordinate
-     * @param chunkZ Chunk Z coordinate
-     * @return true if the chunk is inside the world border
-     */
-    private boolean isChunkInsideWorldBorder(Player player, int chunkX, int chunkZ) {
-        org.bukkit.WorldBorder border = player.getWorld().getWorldBorder();
-        if (border == null) {
-            return true;
-        }
-
-        double borderSize = border.getSize();
-        if (borderSize >= 5.9999968E7) {
-            return true;
-        }
-
-        double borderCenterX = border.getCenter().getX();
-        double borderCenterZ = border.getCenter().getZ();
-        double borderRadius = borderSize / 2.0;
-
-        double chunkMinX = chunkX * 16.0;
-        double chunkMaxX = chunkMinX + 16.0;
-        double chunkMinZ = chunkZ * 16.0;
-        double chunkMaxZ = chunkMinZ + 16.0;
-
-        double dx1 = Math.abs(chunkMinX - borderCenterX);
-        double dz1 = Math.abs(chunkMinZ - borderCenterZ);
-        double dx2 = Math.abs(chunkMaxX - borderCenterX);
-        double dz2 = Math.abs(chunkMaxZ - borderCenterZ);
-
-        return (dx1 <= borderRadius && dz1 <= borderRadius) ||
-                (dx2 <= borderRadius && dz2 <= borderRadius) ||
-                (dx1 <= borderRadius && dz2 <= borderRadius) ||
-                (dx2 <= borderRadius && dz1 <= borderRadius);
     }
 }

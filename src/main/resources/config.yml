@@ -3,7 +3,7 @@
 #         ExtendedHorizons V2 Configuration            #
 #                                                      #
 #          Support the project starring it!            #
-#        github.com/Mapacheee/ExtendedHorizons         #
+#     https://github.com/Mapacheee/ExtendedHorizons    #
 #                                                      #
 #   Join our Discord:  https://discord.gg/yA3vD2S8Zj   #
 #                                                      #
@@ -31,12 +31,12 @@ world-settings:
 
 # Performance settings
 performance:
-  # Maximum chunks to load per tick (for async loading)
-  max-chunks-per-tick: 20
-  
   # Number of threads for parallel chunk processing (0 = auto-detect based on CPU cores)
   # Recommended: 0 (auto) or 4-8 for most servers
   chunk-processor-threads: 0
+  
+  # Teleport warmup delay in milliseconds to load fake chunks
+  teleport-warmup-delay: 3000 # in milliseconds
 
   # Fake chunks system (packets cache)
   fake-chunks:
@@ -48,7 +48,7 @@ performance:
     use-compression: false
     # Cache cleanup interval in seconds
     cache-cleanup-interval: 20
-    # Enable NMS chunk memory cache (reuses loaded chunks, saves CPU but uses RAM)
+    # Enable chunk memory cache (reuses loaded chunks, saves CPU but uses RAM)
     # Recommended: true for <50 players, false for >100 players or low RAM servers
     enable-memory-cache: true
     # Maximum chunks to cache in memory (1000 = ~40-80MB depending on chunk complexity)
@@ -60,6 +60,14 @@ performance:
     sky-light-threshold: 14
     max-y-level: 320
     min-y-level: -64
+
+# Bandwidth Saver settings
+bandwidth-saver:
+  enabled: true
+  # Skips redundant entity movement/rotation packets (ESU-inspired)
+  skip-redundant-packets: true
+  # Limits the rate of fake chunk sending to prevent network saturation
+  max-fake-chunks-per-tick: 10
 
 # Database (SQLite) used for player view persistence
 database:

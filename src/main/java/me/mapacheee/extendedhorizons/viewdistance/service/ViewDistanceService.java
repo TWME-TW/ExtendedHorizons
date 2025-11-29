@@ -7,8 +7,9 @@ import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import me.mapacheee.extendedhorizons.shared.service.MessageService;
 import me.mapacheee.extendedhorizons.shared.storage.PlayerStorageService;
 import me.mapacheee.extendedhorizons.viewdistance.entity.PlayerView;
-import org.bukkit.WorldBorder;
+
 import org.bukkit.entity.Player;
+import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,7 +30,6 @@ public class ViewDistanceService {
     private final PacketService packetService;
     private final LuckPermsService luckPermsService;
     private final MessageService messageService;
-    private final me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService;
     private final OcclusionCullingService occlusionCullingService;
 
     @Inject
@@ -40,7 +40,6 @@ public class ViewDistanceService {
             PacketService packetService,
             LuckPermsService luckPermsService,
             MessageService messageService,
-            me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService schedulerService,
             OcclusionCullingService occlusionCullingService) {
         this.configService = configService;
         this.storageService = storageService;
@@ -49,7 +48,6 @@ public class ViewDistanceService {
         this.packetService = packetService;
         this.luckPermsService = luckPermsService;
         this.messageService = messageService;
-        this.schedulerService = schedulerService;
         this.occlusionCullingService = occlusionCullingService;
     }
 
@@ -74,26 +72,29 @@ public class ViewDistanceService {
 
             packetService.ensureClientRadius(player, clamped);
 
-            schedulerService.runEntityLater(player, () -> {
-                if (!player.isOnline())
-                    return;
-                packetService.ensureClientRadius(player, clamped);
-            }, 5L);
+            player.getScheduler().runDelayed(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                    (task) -> {
+                        if (!player.isOnline())
+                            return;
+                        packetService.ensureClientRadius(player, clamped);
+                    }, null, 5L);
 
             var msgCfg = configService.get().messages();
             if (msgCfg != null && msgCfg.welcomeMessage() != null && msgCfg.welcomeMessage().enabled()) {
-                schedulerService.runEntityLater(player, () -> {
-                    if (player.isOnline())
-                        messageService.sendWelcome(player, clamped);
-                }, 15L);
+                player.getScheduler().runDelayed(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                        (task) -> {
+                            if (player.isOnline())
+                                messageService.sendWelcome(player, clamped);
+                        }, null, 15L);
             }
 
-            schedulerService.runEntityLater(player, () -> {
-                if (!player.isOnline())
-                    return;
-                packetService.ensureClientRadius(player, clamped);
-                updatePlayerView(player);
-            }, 70L);
+            player.getScheduler().runDelayed(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                    (task) -> {
+                        if (!player.isOnline())
+                            return;
+                        packetService.ensureClientRadius(player, clamped);
+                        updatePlayerView(player);
+                    }, null, 70L);
         });
     }
 
@@ -240,41 +241,6 @@ public class ViewDistanceService {
     }
 
     /**
-     * Checks if a chunk is within the world border.
-     * 
-     * @param player The player whose world to check
-     * @param chunkX Chunk X coordinate
-     * @param chunkZ Chunk Z coordinate
-     * @return true if the chunk is within the world border
-     */
-    private boolean isChunkWithinWorldBorder(Player player, int chunkX, int chunkZ) {
-        WorldBorder border = player.getWorld().getWorldBorder();
-        if (border == null) {
-            return true;
-        }
-
-        double borderSize = border.getSize();
-
-        if (borderSize >= 5.9999968E7) { // mc max world size
-            return true;
-        }
-
-        double borderCenterX = border.getCenter().getX();
-        double borderCenterZ = border.getCenter().getZ();
-        double borderRadius = borderSize / 2.0;
-
-        double chunkBlockX = (chunkX << 4) + 8;
-        double chunkBlockZ = (chunkZ << 4) + 8;
-
-        double dx = chunkBlockX - borderCenterX;
-        double dz = chunkBlockZ - borderCenterZ;
-        double distanceSquared = dx * dx + dz * dz;
-
-        double maxDistanceSquared = (borderRadius + 8) * (borderRadius + 8);
-        return distanceSquared <= maxDistanceSquared;
-    }
-
-    /**
      * Classifies chunks into real (within server view-distance) and fake (beyond
      * server view-distance)
      * Also filters out chunks outside the world border.
@@ -290,10 +256,10 @@ public class ViewDistanceService {
         double serverRadiusSquared = (serverViewDistance + 0.5) * (serverViewDistance + 0.5);
 
         for (long key : allChunks) {
-            int chunkX = (int) (key & 0xFFFFFFFFL);
-            int chunkZ = (int) (key >> 32);
+            int chunkX = ChunkUtils.unpackX(key);
+            int chunkZ = ChunkUtils.unpackZ(key);
 
-            if (!isChunkWithinWorldBorder(player, chunkX, chunkZ)) {
+            if (!ChunkUtils.isChunkWithinWorldBorder(player.getWorld(), chunkX, chunkZ)) {
                 continue;
             }
 
