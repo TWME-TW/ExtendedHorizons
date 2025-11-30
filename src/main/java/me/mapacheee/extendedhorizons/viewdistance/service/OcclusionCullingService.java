@@ -29,6 +29,11 @@ public class OcclusionCullingService {
             return false;
         }
 
+        if (player.getWorld().getEnvironment() == org.bukkit.World.Environment.NETHER
+                || player.getWorld().getEnvironment() == org.bukkit.World.Environment.THE_END) {
+            return false;
+        }
+
         int playerY = player.getLocation().getBlockY();
         if (playerY > config.maxYLevel() || playerY < config.minYLevel()) {
             return false;

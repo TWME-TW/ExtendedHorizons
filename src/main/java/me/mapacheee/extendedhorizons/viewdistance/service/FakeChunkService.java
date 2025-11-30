@@ -26,6 +26,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
 
 /*
@@ -67,6 +68,30 @@ public class FakeChunkService {
      */
     private final Map<UUID, Long> warmupStartTimes = new ConcurrentHashMap<>();
 
+    /**
+     * Queue of packets waiting to be sent to players (Batched)
+     */
+    private final Map<UUID, Queue<net.minecraft.network.protocol.Packet<?>>> pendingPackets = new ConcurrentHashMap<>();
+
+    private static java.lang.invoke.MethodHandle packetConstructorHandle;
+
+    static {
+        try {
+            for (java.lang.reflect.Constructor<?> c : net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket.class
+                    .getConstructors()) {
+                if (c.getParameterCount() == 4
+                        && c.getParameterTypes()[0]
+                                .isAssignableFrom(net.minecraft.world.level.chunk.LevelChunk.class)) {
+                    c.setAccessible(true);
+                    packetConstructorHandle = java.lang.invoke.MethodHandles.lookup().unreflectConstructor(c);
+                    break;
+                }
+            }
+        } catch (Throwable t) {
+            logger.error("[EH] Failed to cache chunk packet constructor handle", t);
+        }
+    }
+
     private static final boolean DEBUG = false;
 
     private static final int TELEPORT_DETECTION_THRESHOLD = 3;
@@ -102,6 +127,7 @@ public class FakeChunkService {
                 });
 
         startProgressiveLoadingTask();
+        startPacketSenderTask();
     }
 
     public void onPlayerJoin(Player player) {
@@ -124,7 +150,7 @@ public class FakeChunkService {
      * Starts a task that progressively loads chunks in batches
      */
     private void startProgressiveLoadingTask() {
-        Bukkit.getGlobalRegionScheduler()
+        Bukkit.getAsyncScheduler()
                 .runAtFixedRate(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(), (task) -> {
                     playerChunksProcessedThisTick.clear();
 
@@ -153,7 +179,59 @@ public class FakeChunkService {
                         processChunkQueue(player, queue);
                     }
 
-                }, 1L, Math.max(1, configService.get().performance().chunkProcessInterval()));
+                }, 50L, Math.max(50L, configService.get().performance().chunkProcessInterval() * 50L),
+                        TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Starts a task that flushes pending packets to players
+     * Runs SYNC on GlobalRegionScheduler to interact with Netty safely
+     */
+    /**
+     * Starts a task that flushes pending packets to players
+     * Runs ASYNC to offload the main thread (Netty is thread-safe)
+     */
+    private void startPacketSenderTask() {
+        Bukkit.getAsyncScheduler()
+                .runAtFixedRate(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(), (task) -> {
+                    if (pendingPackets.isEmpty())
+                        return;
+
+                    for (Iterator<Map.Entry<UUID, Queue<net.minecraft.network.protocol.Packet<?>>>> it = pendingPackets
+                            .entrySet().iterator(); it.hasNext();) {
+                        Map.Entry<UUID, Queue<net.minecraft.network.protocol.Packet<?>>> entry = it.next();
+                        UUID uuid = entry.getKey();
+                        Queue<net.minecraft.network.protocol.Packet<?>> queue = entry.getValue();
+
+                        if (queue == null || queue.isEmpty()) {
+                            it.remove();
+                            continue;
+                        }
+
+                        Player player = Bukkit.getPlayer(uuid);
+                        if (player == null || !player.isOnline()) {
+                            it.remove();
+                            continue;
+                        }
+
+                        try {
+                            org.bukkit.craftbukkit.entity.CraftPlayer craftPlayer = (org.bukkit.craftbukkit.entity.CraftPlayer) player;
+                            net.minecraft.server.level.ServerPlayer nmsPlayer = craftPlayer.getHandle();
+                            net.minecraft.network.Connection connection = nmsPlayer.connection.connection;
+
+                            int count = 0;
+                            while (!queue.isEmpty() && count < 50) {
+                                net.minecraft.network.protocol.Packet<?> packet = queue.poll();
+                                if (packet != null) {
+                                    connection.send(packet);
+                                    count++;
+                                }
+                            }
+                        } catch (Exception e) {
+                            it.remove();
+                        }
+                    }
+                }, 50L, 50L, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -265,7 +343,8 @@ public class FakeChunkService {
      * Chunks are prioritized by distance (closer chunks first)
      * Uses progressive loading to avoid overwhelming the server
      */
-    public CompletableFuture<Integer> sendFakeChunks(Player player, Set<Long> chunkKeys) {
+    public CompletableFuture<Integer> sendFakeChunks(Player player, Set<Long> chunkKeys, double borderCenterX,
+            double borderCenterZ, double borderSize) {
         if (!configService.get().performance().fakeChunks().enabled()) {
             return CompletableFuture.completedFuture(0);
         }
@@ -347,7 +426,7 @@ public class FakeChunkService {
             int chunkX = ChunkUtils.unpackX(key);
             int chunkZ = ChunkUtils.unpackZ(key);
 
-            if (!ChunkUtils.isChunkWithinWorldBorder(player.getWorld(), chunkX, chunkZ)) {
+            if (!ChunkUtils.isChunkWithinWorldBorder(borderCenterX, borderCenterZ, borderSize, chunkX, chunkZ)) {
                 continue;
             }
 
@@ -623,80 +702,47 @@ public class FakeChunkService {
      * This is the common method used by all loading strategies
      */
     private void sendChunkPacket(Player player, LevelChunk nmsChunk, long key, Set<Long> sentTracker) {
-        player.getScheduler().run(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(), (task) -> {
-            if (!player.isOnline()) {
-                generatingChunks.remove(key);
-                return;
+        net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = null;
+        try {
+            net.minecraft.world.level.lighting.LevelLightEngine lightEngine = nmsChunk.getLevel().getLightEngine();
+            int sectionCount = nmsChunk.getSections().length;
+            java.util.BitSet[] lightMasks = getLightMasks(sectionCount);
+            java.util.BitSet skyLight = lightMasks[0];
+            java.util.BitSet blockLight = lightMasks[1];
+
+            if (packetConstructorHandle != null) {
+                packet = (net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket) packetConstructorHandle
+                        .invoke(
+                                nmsChunk,
+                                lightEngine,
+                                skyLight,
+                                blockLight);
             }
+        } catch (Throwable e) {
+            if (DEBUG)
+                logger.error("[EH] Failed to instantiate chunk packet async", e);
+            generatingChunks.remove(key);
+            return;
+        }
 
-            try {
-                org.bukkit.craftbukkit.entity.CraftPlayer craftPlayer = (org.bukkit.craftbukkit.entity.CraftPlayer) player;
-                net.minecraft.server.level.ServerPlayer nmsPlayer = craftPlayer.getHandle();
+        if (packet == null) {
+            generatingChunks.remove(key);
+            return;
+        }
 
-                net.minecraft.server.level.ServerLevel playerLevel = ((org.bukkit.craftbukkit.CraftWorld) player
-                        .getWorld()).getHandle();
-                if (playerLevel != nmsChunk.getLevel()) {
-                    generatingChunks.remove(key);
-                    return;
-                }
+        final net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket finalPacket = packet;
 
-                net.minecraft.world.level.lighting.LevelLightEngine lightEngine = nmsChunk.getLevel().getLightEngine();
+        pendingPackets.computeIfAbsent(player.getUniqueId(), k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
+                .add(finalPacket);
 
-                int sectionCount = nmsChunk.getSections().length;
-                java.util.BitSet[] lightMasks = getLightMasks(sectionCount);
-                java.util.BitSet skyLight = lightMasks[0];
-                java.util.BitSet blockLight = lightMasks[1];
+        sentTracker.add(key);
+        generatingChunks.remove(key);
 
-                net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = null;
-                try {
-                    for (java.lang.reflect.Constructor<?> c : net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket.class
-                            .getConstructors()) {
-                        if (c.getParameterCount() == 4
-                                && c.getParameterTypes()[0].isAssignableFrom(nmsChunk.getClass())) {
-                            packet = (net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket) c
-                                    .newInstance(
-                                            nmsChunk,
-                                            lightEngine,
-                                            skyLight,
-                                            blockLight);
-                            break;
-                        }
-                    }
-                } catch (Exception e) {
-                    if (DEBUG)
-                        logger.error("[EH] Failed to instantiate chunk packet via reflection", e);
-                }
-
-                if (packet == null) {
-                    // Note: Constructor is deprecated but no alternative available in current Paper
-                    // version
-                    @SuppressWarnings("deprecation")
-                    net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket fallbackPacket = new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
-                            nmsChunk,
-                            lightEngine,
-                            skyLight,
-                            blockLight);
-                    packet = fallbackPacket;
-                }
-
-                nmsPlayer.connection.send(packet);
-
-                sentTracker.add(key);
-                generatingChunks.remove(key);
-
-                if (DEBUG) {
-                    int chunkX = ChunkUtils.unpackX(key);
-                    int chunkZ = ChunkUtils.unpackZ(key);
-                    logger.info("[EH] Sent fake chunk {},{} to {}", chunkX, chunkZ, player.getName());
-                }
-            } catch (Exception e) {
-                generatingChunks.remove(key);
-                if (DEBUG) {
-                    logger.warn("[EH] Failed to send chunk packet: {}", e.getMessage());
-                    e.printStackTrace();
-                }
-            }
-        }, null);
+        if (DEBUG) {
+            int chunkX = ChunkUtils.unpackX(key);
+            int chunkZ = ChunkUtils.unpackZ(key);
+            logger.info("[EH] Queued fake chunk {},{} for {}", chunkX, chunkZ, player.getName());
+        }
     }
 
     /**

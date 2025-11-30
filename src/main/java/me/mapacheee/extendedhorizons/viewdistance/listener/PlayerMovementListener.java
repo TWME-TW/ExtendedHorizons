@@ -14,8 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /*
  *   Listens player movement and triggers view updates
- *   Uses throttling to prevent excessive updates when standing still
- *   Only updates on chunk change or significant movement
+ *   Uses throttling to prevent excessive updates
 */
 @ListenerComponent
 public class PlayerMovementListener implements Listener {
@@ -33,11 +32,12 @@ public class PlayerMovementListener implements Listener {
 
     @EventHandler
     public void onMove(PlayerMoveEvent event) {
-        if (event.getTo() == null) return;
+        if (event.getTo() == null)
+            return;
 
         if (event.getFrom().getBlockX() == event.getTo().getBlockX() &&
-            event.getFrom().getBlockY() == event.getTo().getBlockY() &&
-            event.getFrom().getBlockZ() == event.getTo().getBlockZ()) {
+                event.getFrom().getBlockY() == event.getTo().getBlockY() &&
+                event.getFrom().getBlockZ() == event.getTo().getBlockZ()) {
             return;
         }
 
@@ -62,7 +62,13 @@ public class PlayerMovementListener implements Listener {
         }
 
         lastChunkPos.put(playerId, currentChunkPos);
-        lastUpdateTime.put(playerId, System.currentTimeMillis());
+
+        Long lastUpdate = lastUpdateTime.get(playerId);
+        long now = System.currentTimeMillis();
+        if (lastUpdate != null && now - lastUpdate < 250) {
+            return;
+        }
+        lastUpdateTime.put(playerId, now);
 
         int dX = Math.abs(toChunkX - fromChunkX);
         int dZ = Math.abs(toChunkZ - fromChunkZ);
@@ -70,9 +76,11 @@ public class PlayerMovementListener implements Listener {
 
         if (cheb >= 3) {
             viewDistanceService.updatePlayerViewFast(event.getPlayer());
-            Bukkit.getScheduler().runTaskLater(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class), () -> {
-                if (event.getPlayer().isOnline()) viewDistanceService.updatePlayerView(event.getPlayer());
-            }, 5L);
+            Bukkit.getScheduler().runTaskLater(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin
+                    .getPlugin(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class), () -> {
+                        if (event.getPlayer().isOnline())
+                            viewDistanceService.updatePlayerView(event.getPlayer());
+                    }, 5L);
         } else {
             viewDistanceService.updatePlayerView(event.getPlayer());
         }

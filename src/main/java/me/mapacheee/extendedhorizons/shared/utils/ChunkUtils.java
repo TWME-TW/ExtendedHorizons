@@ -38,23 +38,22 @@ public class ChunkUtils {
      * @param chunkZ Chunk Z coordinate
      * @return true if the chunk is within the world border
      */
-    public static boolean isChunkWithinWorldBorder(World world, int chunkX, int chunkZ) {
-        if (world == null)
-            return false;
-
-        WorldBorder border = world.getWorldBorder();
-        if (border == null) {
-            return true;
-        }
-
-        double borderSize = border.getSize();
-
+    /**
+     * Checks if a chunk is within the world border (Thread-safe version).
+     * 
+     * @param borderCenterX Border center X
+     * @param borderCenterZ Border center Z
+     * @param borderSize    Border size
+     * @param chunkX        Chunk X coordinate
+     * @param chunkZ        Chunk Z coordinate
+     * @return true if the chunk is within the world border
+     */
+    public static boolean isChunkWithinWorldBorder(double borderCenterX, double borderCenterZ, double borderSize,
+            int chunkX, int chunkZ) {
         if (borderSize >= 5.9999968E7) { // mc max world size
             return true;
         }
 
-        double borderCenterX = border.getCenter().getX();
-        double borderCenterZ = border.getCenter().getZ();
         double borderRadius = borderSize / 2.0;
 
         double chunkBlockX = (chunkX << 4) + 8;
@@ -66,5 +65,26 @@ public class ChunkUtils {
 
         double maxDistanceSquared = (borderRadius + 8) * (borderRadius + 8);
         return distanceSquared <= maxDistanceSquared;
+    }
+
+    /**
+     * Checks if a chunk is within the world border.
+     * 
+     * @param world  The world to check
+     * @param chunkX Chunk X coordinate
+     * @param chunkZ Chunk Z coordinate
+     * @return true if the chunk is within the world border
+     */
+    public static boolean isChunkWithinWorldBorder(World world, int chunkX, int chunkZ) {
+        if (world == null)
+            return false;
+
+        WorldBorder border = world.getWorldBorder();
+        if (border == null) {
+            return true;
+        }
+
+        return isChunkWithinWorldBorder(border.getCenter().getX(), border.getCenter().getZ(), border.getSize(), chunkX,
+                chunkZ);
     }
 }

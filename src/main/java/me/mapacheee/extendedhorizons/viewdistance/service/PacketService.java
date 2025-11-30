@@ -29,17 +29,30 @@ public class PacketService {
     private static final Logger logger = LoggerFactory.getLogger(PacketService.class);
     private final Plugin plugin = JavaPlugin.getPlugin(ExtendedHorizonsPlugin.class);
 
+    private final java.util.Map<java.util.UUID, Integer> lastSentChunkRadius = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<java.util.UUID, Integer> lastSentSimulationDistance = new java.util.concurrent.ConcurrentHashMap<>();
+
     private static final boolean DEBUG = false;
 
     @Inject
-    public PacketService() {}
+    public PacketService() {
+    }
 
     /**
      * Ensures client has correct chunk cache radius
      */
     public void ensureClientRadius(Player player, int radius) {
-        if (radius < 2) return;
+        if (radius < 2)
+            return;
 
+        java.util.UUID uuid = player.getUniqueId();
+        Integer lastRadius = lastSentChunkRadius.get(uuid);
+
+        if (lastRadius != null && lastRadius == radius) {
+            return;
+        }
+
+        lastSentChunkRadius.put(uuid, radius);
         ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
         nmsPlayer.connection.send(new ClientboundSetChunkCacheRadiusPacket(radius));
     }
@@ -52,6 +65,25 @@ public class PacketService {
         int cx = player.getLocation().getBlockX() >> 4;
         int cz = player.getLocation().getBlockZ() >> 4;
         nmsPlayer.connection.send(new ClientboundSetChunkCacheCenterPacket(cx, cz));
+    }
+
+    /**
+     * Ensures client has correct simulation distance (pushes back fog)
+     */
+    public void ensureClientSimulationDistance(Player player, int distance) {
+        if (distance < 2)
+            return;
+
+        java.util.UUID uuid = player.getUniqueId();
+        Integer lastDistance = lastSentSimulationDistance.get(uuid);
+
+        if (lastDistance != null && lastDistance == distance) {
+            return;
+        }
+
+        lastSentSimulationDistance.put(uuid, distance);
+        ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
+        nmsPlayer.connection.send(new ClientboundSetSimulationDistancePacket(distance));
     }
 
     /**
@@ -68,7 +100,8 @@ public class PacketService {
         Bukkit.getScheduler().runTask(plugin, () -> {
             try {
                 ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
-                net.minecraft.world.level.chunk.ChunkAccess chunkAccess = ((CraftChunk) chunk).getHandle(net.minecraft.world.level.chunk.status.ChunkStatus.FULL);
+                net.minecraft.world.level.chunk.ChunkAccess chunkAccess = ((CraftChunk) chunk)
+                        .getHandle(net.minecraft.world.level.chunk.status.ChunkStatus.FULL);
 
                 if (!(chunkAccess instanceof LevelChunk)) {
                     future.complete(null);
@@ -79,11 +112,10 @@ public class PacketService {
 
                 @SuppressWarnings("deprecation")
                 ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(
-                    nmsChunk,
-                    nmsChunk.getLevel().getLightEngine(),
-                    null,
-                    null
-                );
+                        nmsChunk,
+                        nmsChunk.getLevel().getLightEngine(),
+                        null,
+                        null);
 
                 nmsPlayer.connection.send(packet);
 
@@ -117,24 +149,27 @@ public class PacketService {
             int sent = 0;
 
             for (Chunk chunk : chunks) {
-                if (!player.isOnline()) break;
+                if (!player.isOnline())
+                    break;
 
                 try {
                     ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
-                    net.minecraft.world.level.chunk.ChunkAccess chunkAccess = ((CraftChunk) chunk).getHandle(net.minecraft.world.level.chunk.status.ChunkStatus.FULL);
+                    net.minecraft.world.level.chunk.ChunkAccess chunkAccess = ((CraftChunk) chunk)
+                            .getHandle(net.minecraft.world.level.chunk.status.ChunkStatus.FULL);
 
-                    if (!(chunkAccess instanceof LevelChunk)) continue;
+                    if (!(chunkAccess instanceof LevelChunk))
+                        continue;
 
                     LevelChunk nmsChunk = (LevelChunk) chunkAccess;
 
-                    // Note: Constructor is deprecated but no alternative available in current Paper version
+                    // Note: Constructor is deprecated but no alternative available in current Paper
+                    // version
                     @SuppressWarnings("deprecation")
                     ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(
-                        nmsChunk,
-                        nmsChunk.getLevel().getLightEngine(),
-                        null,
-                        null
-                    );
+                            nmsChunk,
+                            nmsChunk.getLevel().getLightEngine(),
+                            null,
+                            null);
 
                     nmsPlayer.connection.send(packet);
                     sent++;
@@ -172,19 +207,20 @@ public class PacketService {
             Chunk chunk = world.getChunkAt(chunkX, chunkZ);
 
             if (chunk.isLoaded()) {
-                net.minecraft.world.level.chunk.ChunkAccess chunkAccess = ((CraftChunk) chunk).getHandle(net.minecraft.world.level.chunk.status.ChunkStatus.FULL);
+                net.minecraft.world.level.chunk.ChunkAccess chunkAccess = ((CraftChunk) chunk)
+                        .getHandle(net.minecraft.world.level.chunk.status.ChunkStatus.FULL);
 
                 if (chunkAccess instanceof LevelChunk) {
                     LevelChunk nmsChunk = (LevelChunk) chunkAccess;
 
-                    // Note: Constructor is deprecated but no alternative available in current Paper version
+                    // Note: Constructor is deprecated but no alternative available in current Paper
+                    // version
                     @SuppressWarnings("deprecation")
                     ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(
-                        nmsChunk,
-                        nmsChunk.getLevel().getLightEngine(),
-                        null,
-                        null
-                    );
+                            nmsChunk,
+                            nmsChunk.getLevel().getLightEngine(),
+                            null,
+                            null);
 
                     nmsPlayer.connection.send(packet);
                 }

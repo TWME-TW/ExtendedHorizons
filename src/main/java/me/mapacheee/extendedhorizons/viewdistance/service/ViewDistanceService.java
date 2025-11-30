@@ -63,20 +63,26 @@ public class ViewDistanceService {
 
         storageService.getPlayerData(player.getUniqueId()).thenAccept(playerData -> {
             int fallbackDefault = configService.get().viewDistance().defaultDistance();
-            int initialDistance = playerData
-                    .map(me.mapacheee.extendedhorizons.shared.storage.PlayerData::getViewDistance)
-                    .orElse(fallbackDefault);
+            int clientDistance = player.getClientViewDistance();
+            int initialDistance = (clientDistance > 0) ? clientDistance
+                    : playerData
+                            .map(me.mapacheee.extendedhorizons.shared.storage.PlayerData::getViewDistance)
+                            .orElse(fallbackDefault);
+
             int clamped = clampDistance(player, initialDistance);
             PlayerView playerView = new PlayerView(player, clamped);
             playerViews.put(player.getUniqueId(), playerView);
 
             packetService.ensureClientRadius(player, clamped);
+            packetService.ensureClientSimulationDistance(player, clamped);
 
             player.getScheduler().runDelayed(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
                     (task) -> {
                         if (!player.isOnline())
                             return;
+
                         packetService.ensureClientRadius(player, clamped);
+                        packetService.ensureClientSimulationDistance(player, clamped);
                     }, null, 5L);
 
             var msgCfg = configService.get().messages();
@@ -92,7 +98,9 @@ public class ViewDistanceService {
                     (task) -> {
                         if (!player.isOnline())
                             return;
+
                         packetService.ensureClientRadius(player, clamped);
+                        packetService.ensureClientSimulationDistance(player, clamped);
                         updatePlayerView(player);
                     }, null, 70L);
         });
@@ -135,7 +143,9 @@ public class ViewDistanceService {
 
         storageService.savePlayerData(
                 new me.mapacheee.extendedhorizons.shared.storage.PlayerData(player.getUniqueId(), clamped));
+
         packetService.ensureClientRadius(player, clamped);
+        packetService.ensureClientSimulationDistance(player, clamped);
 
         updatePlayerView(player);
     }
@@ -179,12 +189,14 @@ public class ViewDistanceService {
         if (!isPluginEnabledForWorld(player.getWorld())) {
             int serverDist = org.bukkit.Bukkit.getViewDistance();
             packetService.ensureClientRadius(player, serverDist);
+            packetService.ensureClientSimulationDistance(player, serverDist);
             return;
         }
 
         if (occlusionCullingService.isOccluded(player)) {
             int serverDist = org.bukkit.Bukkit.getViewDistance();
             packetService.ensureClientRadius(player, serverDist);
+            packetService.ensureClientSimulationDistance(player, serverDist);
             fakeChunkService.clearPlayerFakeChunks(player);
             return;
         }
@@ -199,14 +211,43 @@ public class ViewDistanceService {
         }
 
         packetService.ensureClientCenter(player);
+
         packetService.ensureClientRadius(player, playerView.getTargetDistance());
+        packetService.ensureClientSimulationDistance(player, playerView.getTargetDistance());
+        player.getScheduler().runDelayed(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                (task) -> {
+                    if (player.isOnline()) {
+                        packetService.ensureClientSimulationDistance(player, playerView.getTargetDistance());
+                    }
+                }, null, 20L);
 
-        Set<Long> allNeededChunks = chunkService.computeCircularKeys(player, playerView.getTargetDistance());
-        ChunkClassification classification = classifyChunks(player, allNeededChunks);
-
-        if (configService.get().performance().fakeChunks().enabled() && !classification.fakeChunks.isEmpty()) {
-            fakeChunkService.sendFakeChunks(player, classification.fakeChunks);
+        int serverViewDistance = fakeChunkService.getServerViewDistance();
+        if (playerView.getTargetDistance() <= serverViewDistance) {
+            fakeChunkService.clearPlayerFakeChunks(player);
+            return;
         }
+
+        org.bukkit.WorldBorder border = player.getWorld().getWorldBorder();
+        double borderCenterX = border.getCenter().getX();
+        double borderCenterZ = border.getCenter().getZ();
+        double borderSize = border.getSize();
+        int targetDistance = playerView.getTargetDistance();
+
+        org.bukkit.Bukkit.getAsyncScheduler().runNow(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                (task) -> {
+                    if (!player.isOnline())
+                        return;
+
+                    Set<Long> allNeededChunks = chunkService.computeCircularKeys(player, targetDistance);
+                    ChunkClassification classification = classifyChunks(player, allNeededChunks, borderCenterX,
+                            borderCenterZ, borderSize);
+
+                    if (configService.get().performance().fakeChunks().enabled()
+                            && !classification.fakeChunks.isEmpty()) {
+                        fakeChunkService.sendFakeChunks(player, classification.fakeChunks, borderCenterX, borderCenterZ,
+                                borderSize);
+                    }
+                });
     }
 
     /**
@@ -229,15 +270,31 @@ public class ViewDistanceService {
             return;
 
         int baseTarget = clampDistance(player, playerView.getTargetDistance());
+
         packetService.ensureClientCenter(player);
         packetService.ensureClientRadius(player, baseTarget);
+        packetService.ensureClientSimulationDistance(player, baseTarget);
 
-        Set<Long> allNeededChunks = chunkService.computeCircularKeys(player, baseTarget);
-        ChunkClassification classification = classifyChunks(player, allNeededChunks);
+        org.bukkit.WorldBorder border = player.getWorld().getWorldBorder();
+        double borderCenterX = border.getCenter().getX();
+        double borderCenterZ = border.getCenter().getZ();
+        double borderSize = border.getSize();
 
-        if (configService.get().performance().fakeChunks().enabled() && !classification.fakeChunks.isEmpty()) {
-            fakeChunkService.sendFakeChunks(player, classification.fakeChunks);
-        }
+        org.bukkit.Bukkit.getAsyncScheduler().runNow(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                (task) -> {
+                    if (!player.isOnline())
+                        return;
+
+                    Set<Long> allNeededChunks = chunkService.computeCircularKeys(player, baseTarget);
+                    ChunkClassification classification = classifyChunks(player, allNeededChunks, borderCenterX,
+                            borderCenterZ, borderSize);
+
+                    if (configService.get().performance().fakeChunks().enabled()
+                            && !classification.fakeChunks.isEmpty()) {
+                        fakeChunkService.sendFakeChunks(player, classification.fakeChunks, borderCenterX, borderCenterZ,
+                                borderSize);
+                    }
+                });
     }
 
     /**
@@ -245,7 +302,8 @@ public class ViewDistanceService {
      * server view-distance)
      * Also filters out chunks outside the world border.
      */
-    private ChunkClassification classifyChunks(Player player, Set<Long> allChunks) {
+    private ChunkClassification classifyChunks(Player player, Set<Long> allChunks, double borderCenterX,
+            double borderCenterZ, double borderSize) {
         int serverViewDistance = fakeChunkService.getServerViewDistance();
         int playerChunkX = player.getLocation().getBlockX() >> 4;
         int playerChunkZ = player.getLocation().getBlockZ() >> 4;
@@ -259,7 +317,7 @@ public class ViewDistanceService {
             int chunkX = ChunkUtils.unpackX(key);
             int chunkZ = ChunkUtils.unpackZ(key);
 
-            if (!ChunkUtils.isChunkWithinWorldBorder(player.getWorld(), chunkX, chunkZ)) {
+            if (!ChunkUtils.isChunkWithinWorldBorder(borderCenterX, borderCenterZ, borderSize, chunkX, chunkZ)) {
                 continue;
             }
 
