@@ -82,6 +82,8 @@ public record MainConfig(
         public record BandwidthSaverConfig(
                         boolean enabled,
                         @Setting("skip-redundant-packets") boolean skipRedundantPackets,
-                        @Setting("max-fake-chunks-per-tick") int maxFakeChunksPerTick) {
+                        @Setting("max-fake-chunks-per-tick") int maxFakeChunksPerTick,
+                        @Setting("max-bandwidth-per-player") int maxBandwidthPerPlayer,
+                        @Setting("adaptive-rate-limiting") boolean adaptiveRateLimiting) {
         }
 }

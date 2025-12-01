@@ -73,6 +73,21 @@ public class FakeChunkService {
      */
     private final Map<UUID, Queue<net.minecraft.network.protocol.Packet<?>>> pendingPackets = new ConcurrentHashMap<>();
 
+    /**
+     * Tracks bytes sent per player in the current second (for bandwidth limiting)
+     */
+    private final Map<UUID, Long> playerBytesThisSecond = new ConcurrentHashMap<>();
+
+    /**
+     * Tracks the timestamp when the byte counter was last reset (per player)
+     */
+    private final Map<UUID, Long> playerByteResetTime = new ConcurrentHashMap<>();
+
+    /**
+     * Caches player average ping for adaptive rate limiting
+     */
+    private final Map<UUID, Integer> playerAvgPing = new ConcurrentHashMap<>();
+
     private static java.lang.invoke.MethodHandle packetConstructorHandle;
 
     static {
@@ -185,11 +200,6 @@ public class FakeChunkService {
 
     /**
      * Starts a task that flushes pending packets to players
-     * Runs SYNC on GlobalRegionScheduler to interact with Netty safely
-     */
-    /**
-     * Starts a task that flushes pending packets to players
-     * Runs ASYNC to offload the main thread (Netty is thread-safe)
      */
     private void startPacketSenderTask() {
         Bukkit.getAsyncScheduler()
@@ -219,12 +229,42 @@ public class FakeChunkService {
                             net.minecraft.server.level.ServerPlayer nmsPlayer = craftPlayer.getHandle();
                             net.minecraft.network.Connection connection = nmsPlayer.connection.connection;
 
+                            int ping = player.getPing();
+                            playerAvgPing.put(uuid, ping);
+
+                            int maxPacketsThisTick = calculateMaxPackets(ping);
+
+                            long now = System.currentTimeMillis();
+                            if (!playerByteResetTime.containsKey(uuid)) {
+                                playerByteResetTime.put(uuid, now);
+                                playerBytesThisSecond.put(uuid, 0L);
+                            }
+
+                            long lastReset = playerByteResetTime.get(uuid);
+
+                            if (now - lastReset >= 1000) {
+                                playerBytesThisSecond.put(uuid, 0L);
+                                playerByteResetTime.put(uuid, now);
+                            }
+
+                            long bytesSent = playerBytesThisSecond.get(uuid);
+                            int maxBandwidth = configService.get().bandwidthSaver().maxBandwidthPerPlayer();
+
+                            boolean bandwidthExceeded = maxBandwidth > 0 && bytesSent >= (maxBandwidth * 1024L);
+
                             int count = 0;
-                            while (!queue.isEmpty() && count < 50) {
+                            while (!queue.isEmpty() && count < maxPacketsThisTick && !bandwidthExceeded) {
                                 net.minecraft.network.protocol.Packet<?> packet = queue.poll();
                                 if (packet != null) {
                                     connection.send(packet);
                                     count++;
+
+                                    long estimatedSize = estimatePacketSize(packet);
+                                    bytesSent += estimatedSize;
+                                    playerBytesThisSecond.put(uuid, bytesSent);
+                                    if (maxBandwidth > 0 && bytesSent >= (maxBandwidth * 1024L)) {
+                                        bandwidthExceeded = true;
+                                    }
                                 }
                             }
                         } catch (Exception e) {
@@ -232,6 +272,35 @@ public class FakeChunkService {
                         }
                     }
                 }, 50L, 50L, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Calculates the maximum number of packets to send based on player ping
+     * and adaptive rate limiting configuration
+     */
+    private int calculateMaxPackets(int ping) {
+        if (!configService.get().bandwidthSaver().adaptiveRateLimiting()) {
+            return 50;
+        }
+
+        if (ping < 50) {
+            return 50;
+        } else if (ping < 150) {
+            return 25;
+        } else {
+            return 10;
+        }
+    }
+
+    /**
+     * Estimates the size of a packet in bytes
+     * Chunk packets are approximately 2KB on average
+     */
+    private long estimatePacketSize(net.minecraft.network.protocol.Packet<?> packet) {
+        if (packet instanceof net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket) {
+            return 2048;
+        }
+        return 512;
     }
 
     /**
@@ -404,17 +473,35 @@ public class FakeChunkService {
         boolean inWarmup = startTime != null && System.currentTimeMillis() - startTime < warmupDelay;
 
         if (inWarmup) {
+            List<Long> sortedKeys = new ArrayList<>(chunkKeys);
+            sortedKeys.sort((key1, key2) -> {
+                int x1 = ChunkUtils.unpackX(key1);
+                int z1 = ChunkUtils.unpackZ(key1);
+                int x2 = ChunkUtils.unpackX(key2);
+                int z2 = ChunkUtils.unpackZ(key2);
+
+                int dx1 = x1 - playerChunkX;
+                int dz1 = z1 - playerChunkZ;
+                int dx2 = x2 - playerChunkX;
+                int dz2 = z2 - playerChunkZ;
+                long dist1Squared = (long) dx1 * dx1 + (long) dz1 * dz1;
+                long dist2Squared = (long) dx2 * dx2 + (long) dz2 * dz2;
+
+                return Long.compare(dist1Squared, dist2Squared);
+            });
+
             Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
                     k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
 
-            for (long key : chunkKeys) {
+            for (long key : sortedKeys) {
                 if (!queue.contains(key)) {
                     queue.add(key);
                 }
             }
 
             if (DEBUG)
-                logger.info("[EH] Warmup active for {}, queued {} chunks", player.getName(), chunkKeys.size());
+                logger.info("[EH] Warmup active for {}, queued {} chunks (sorted by distance)", player.getName(),
+                        chunkKeys.size());
             return CompletableFuture.completedFuture(0);
         }
 

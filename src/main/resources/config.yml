@@ -68,6 +68,12 @@ bandwidth-saver:
   skip-redundant-packets: true
   # Limits the rate of fake chunk sending to prevent network saturation
   max-fake-chunks-per-tick: 22
+  # Maximum bandwidth per player in KB/s (512 KB/s = ~4 Mbps)
+  # Set to 0 to disable bandwidth limiting
+  max-bandwidth-per-player: 512
+  # Enable adaptive rate limiting based on player ping
+  # Reduces packet rate for high-ping players to prevent packet loss
+  adaptive-rate-limiting: true
 
 # Database (SQLite) used for player view persistence
 database:
