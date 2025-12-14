@@ -10,7 +10,9 @@ import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.World;
+import org.bukkit.craftbukkit.CraftChunk;
 import org.bukkit.craftbukkit.CraftWorld;
 import org.bukkit.entity.Player;
 
@@ -45,6 +47,15 @@ public class FakeChunkService {
     private final me.mapacheee.extendedhorizons.integration.packetevents.PacketChunkCacheService columnCache;
     private final Map<UUID, Set<Long>> playerFakeChunks = new ConcurrentHashMap<>();
     private final Set<Long> generatingChunks = ConcurrentHashMap.newKeySet();
+
+    // Performance counters
+    private final java.util.concurrent.atomic.AtomicInteger chunksGeneratedThisTick = new java.util.concurrent.atomic.AtomicInteger(
+            0);
+    private final java.util.Map<UUID, Long> playerBytesThisTick = new ConcurrentHashMap<>();
+
+    // Config values (cached for performance)
+    private int maxGenerationsPerTick = 1;
+    private long maxBytesPerTick = 25000; // 500KB/s / 20 ticks
 
     /**
      * Queue of chunks pending to be loaded per player
@@ -88,27 +99,17 @@ public class FakeChunkService {
      */
     private final Map<UUID, Integer> playerAvgPing = new ConcurrentHashMap<>();
 
-    private static java.lang.invoke.MethodHandle packetConstructorHandle;
+    /**
+     * Tracks actual bytes sent (measured from real packets)
+     */
+    private final Map<UUID, Long> playerActualBytesSent = new ConcurrentHashMap<>();
 
-    static {
-        try {
-            for (java.lang.reflect.Constructor<?> c : net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket.class
-                    .getConstructors()) {
-                if (c.getParameterCount() == 4
-                        && c.getParameterTypes()[0]
-                                .isAssignableFrom(net.minecraft.world.level.chunk.LevelChunk.class)) {
-                    c.setAccessible(true);
-                    packetConstructorHandle = java.lang.invoke.MethodHandles.lookup().unreflectConstructor(c);
-                    break;
-                }
-            }
-        } catch (Throwable t) {
-            logger.error("[EH] Failed to cache chunk packet constructor handle", t);
-        }
-    }
+    /**
+     * Rolling average of packet sizes per player
+     */
+    private final Map<UUID, Double> playerAvgPacketSize = new ConcurrentHashMap<>();
 
     private static final boolean DEBUG = false;
-
     private static final int TELEPORT_DETECTION_THRESHOLD = 3;
     private static final int QUEUE_CLEAR_DISTANCE_THRESHOLD = 8;
     private static final int QUEUE_CLEAR_FAR_DISTANCE = 15;
@@ -141,8 +142,6 @@ public class FakeChunkService {
                     return t;
                 });
 
-        startProgressiveLoadingTask();
-        startPacketSenderTask();
     }
 
     public void onPlayerJoin(Player player) {
@@ -164,9 +163,59 @@ public class FakeChunkService {
     /**
      * Starts a task that progressively loads chunks in batches
      */
+    @com.thewinterframework.service.annotation.lifecycle.OnEnable
+    public void onEnable() {
+        startProgressiveLoadingTask();
+        startPacketSenderTask();
+    }
+
+    /**
+     * Periodic task to load fake chunks for players with a limit
+     */
     private void startProgressiveLoadingTask() {
         Bukkit.getAsyncScheduler()
                 .runAtFixedRate(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(), (task) -> {
+                    chunksGeneratedThisTick.set(0);
+                    playerBytesThisTick.clear();
+
+                    maxGenerationsPerTick = configService.get().performance().maxGenerationsPerTick();
+                    if (maxGenerationsPerTick <= 0)
+                        maxGenerationsPerTick = 1;
+
+                    long bandwidthPerPlayer = configService.get().bandwidthSaver().maxBandwidthPerPlayer(); // KB/s
+                    if (bandwidthPerPlayer <= 0)
+                        bandwidthPerPlayer = 10000;
+
+                    maxBytesPerTick = (bandwidthPerPlayer * 1024) / 20;
+
+                    double mspt = Bukkit.getAverageTickTime();
+                    double maxMspt = configService.get().performance().maxMsptForLoading();
+                    if (maxMspt > 0 && mspt > maxMspt) {
+                        if (DEBUG) {
+                            logger.warn("[EH] High MSPT ({}ms > {}ms), skipping chunk loading",
+                                    String.format("%.2f", mspt), maxMspt);
+                        }
+                        return;
+                    }
+
+                    int activeTasks = ((java.util.concurrent.ThreadPoolExecutor) chunkProcessor).getActiveCount();
+                    int queueSize = ((java.util.concurrent.ThreadPoolExecutor) chunkProcessor).getQueue().size();
+                    int maxTasks = configService.get().performance().maxAsyncLoadTasks();
+                    int maxQueue = configService.get().performance().maxAsyncLoadQueue();
+
+                    if (maxTasks <= 0)
+                        maxTasks = 4;
+                    if (maxQueue <= 0)
+                        maxQueue = 10;
+
+                    if (activeTasks > maxTasks || queueSize > maxQueue) {
+                        if (DEBUG) {
+                            logger.warn("[EH] High async load ({} active, {} queued), skipping batch", activeTasks,
+                                    queueSize);
+                        }
+                        return;
+                    }
+
                     playerChunksProcessedThisTick.clear();
 
                     List<Map.Entry<UUID, Queue<Long>>> entries = new ArrayList<>(playerChunkQueues.entrySet());
@@ -238,33 +287,39 @@ public class FakeChunkService {
                             if (!playerByteResetTime.containsKey(uuid)) {
                                 playerByteResetTime.put(uuid, now);
                                 playerBytesThisSecond.put(uuid, 0L);
+                                playerActualBytesSent.put(uuid, 0L);
                             }
 
                             long lastReset = playerByteResetTime.get(uuid);
-
                             if (now - lastReset >= 1000) {
                                 playerBytesThisSecond.put(uuid, 0L);
+                                playerActualBytesSent.put(uuid, 0L);
                                 playerByteResetTime.put(uuid, now);
                             }
 
                             long bytesSent = playerBytesThisSecond.get(uuid);
                             int maxBandwidth = configService.get().bandwidthSaver().maxBandwidthPerPlayer();
-
                             boolean bandwidthExceeded = maxBandwidth > 0 && bytesSent >= (maxBandwidth * 1024L);
 
                             int count = 0;
                             while (!queue.isEmpty() && count < maxPacketsThisTick && !bandwidthExceeded) {
                                 net.minecraft.network.protocol.Packet<?> packet = queue.poll();
-                                if (packet != null) {
-                                    connection.send(packet);
-                                    count++;
+                                if (packet == null)
+                                    continue;
 
-                                    long estimatedSize = estimatePacketSize(packet);
-                                    bytesSent += estimatedSize;
-                                    playerBytesThisSecond.put(uuid, bytesSent);
-                                    if (maxBandwidth > 0 && bytesSent >= (maxBandwidth * 1024L)) {
-                                        bandwidthExceeded = true;
-                                    }
+                                connection.send(packet);
+                                count++;
+
+                                long packetSize = estimatePacketSize(packet);
+                                bytesSent += packetSize;
+                                playerBytesThisSecond.put(uuid, bytesSent);
+                                playerActualBytesSent.put(uuid,
+                                        playerActualBytesSent.getOrDefault(uuid, 0L) + packetSize);
+
+                                updateAvgPacketSize(uuid, packetSize);
+
+                                if (maxBandwidth > 0 && bytesSent >= (maxBandwidth * 1024L)) {
+                                    bandwidthExceeded = true;
                                 }
                             }
                         } catch (Exception e) {
@@ -294,13 +349,40 @@ public class FakeChunkService {
 
     /**
      * Estimates the size of a packet in bytes
-     * Chunk packets are approximately 2KB on average
      */
     private long estimatePacketSize(net.minecraft.network.protocol.Packet<?> packet) {
         if (packet instanceof net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket) {
-            return 2048;
+            return configService.get().bandwidthSaver().estimatedPacketSize();
         }
         return 512;
+    }
+
+    /**
+     * Updates the rolling average packet size for a player
+     */
+    private void updateAvgPacketSize(UUID uuid, long size) {
+        double current = playerAvgPacketSize.getOrDefault(uuid,
+                (double) configService.get().bandwidthSaver().estimatedPacketSize());
+        double newAvg = (current * 0.9) + (size * 0.1);
+        playerAvgPacketSize.put(uuid, newAvg);
+    }
+
+    /**
+     * Gets or creates light masks for a given section count
+     * Returns [skyLight, blockLight] BitSets
+     */
+    private java.util.BitSet[] getLightMasks(int sectionCount) {
+        return lightMaskCache.computeIfAbsent(sectionCount, count -> {
+            java.util.BitSet skyLight = new java.util.BitSet();
+            java.util.BitSet blockLight = new java.util.BitSet();
+
+            for (int i = 0; i < count; i++) {
+                skyLight.set(i);
+                blockLight.set(i);
+            }
+
+            return new java.util.BitSet[] { skyLight, blockLight };
+        });
     }
 
     /**
@@ -356,6 +438,15 @@ public class FakeChunkService {
 
             generatingChunks.add(key);
 
+            UUID uuid = player.getUniqueId();
+            long bytesUsed = playerBytesThisTick.getOrDefault(uuid, 0L);
+            if (bytesUsed >= maxBytesPerTick) {
+                generatingChunks.remove(key);
+                playerChunkQueues.computeIfAbsent(uuid, k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
+                        .add(key);
+                continue;
+            }
+
             int chunkX = ChunkUtils.unpackX(key);
             int chunkZ = ChunkUtils.unpackZ(key);
 
@@ -398,6 +489,61 @@ public class FakeChunkService {
                 }
             });
         }
+    }
+
+    /**
+     * Attempts to load chunk from disk without generating
+     */
+    private void loadChunkFromDiskAndSend(Player player, World world, int chunkX, int chunkZ,
+            long key, Set<Long> sentTracker) {
+        world.getChunkAtAsync(chunkX, chunkZ, false).thenAcceptAsync(chunk -> {
+            if (!player.isOnline()) {
+                generatingChunks.remove(key);
+                return;
+            }
+
+            if (chunk == null || !chunk.isLoaded()) {
+                if (chunksGeneratedThisTick.get() >= maxGenerationsPerTick) {
+                    if (DEBUG)
+                        logger.debug("[EH] Generation limit hit, deferring chunk {},{}", chunkX, chunkZ);
+                    generatingChunks.remove(key);
+                    playerChunkQueues
+                            .computeIfAbsent(player.getUniqueId(),
+                                    k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
+                            .add(key);
+                    return;
+                }
+
+                chunksGeneratedThisTick.incrementAndGet();
+
+                if (DEBUG) {
+                    logger.info("[EH] Chunk {},{} not found on disk, generating", chunkX, chunkZ);
+                }
+                generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
+            } else {
+                if (DEBUG) {
+                    logger.info("[EH] Chunk {},{} loaded from disk", chunkX, chunkZ);
+                }
+                sendChunkPacket(player, (LevelChunk) ((CraftChunk) chunk).getHandle(ChunkStatus.FULL), key,
+                        sentTracker);
+            }
+        }, chunkProcessor).exceptionally(throwable -> {
+            if (chunksGeneratedThisTick.get() >= maxGenerationsPerTick) {
+                generatingChunks.remove(key);
+                playerChunkQueues
+                        .computeIfAbsent(player.getUniqueId(), k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
+                        .add(key);
+                return null;
+            }
+            chunksGeneratedThisTick.incrementAndGet();
+
+            if (DEBUG) {
+                logger.warn("[EH] Failed to process disk chunk {},{}, falling back to generation: {}",
+                        chunkX, chunkZ, throwable.getMessage());
+            }
+            generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
+            return null;
+        });
     }
 
     /**
@@ -667,59 +813,6 @@ public class FakeChunkService {
     }
 
     /**
-     * Attempts to load chunk from disk without generating
-     */
-    private void loadChunkFromDiskAndSend(Player player, World world, int chunkX, int chunkZ,
-            long key, Set<Long> sentTracker) {
-        world.getChunkAtAsync(chunkX, chunkZ, false).thenAcceptAsync(chunk -> {
-            if (!player.isOnline()) {
-                generatingChunks.remove(key);
-                return;
-            }
-
-            if (chunk == null || !chunk.isLoaded()) {
-                if (DEBUG) {
-                    logger.info("[EH] Chunk {},{} not found on disk, generating", chunkX, chunkZ);
-                }
-                generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
-                return;
-            }
-
-            try {
-                org.bukkit.craftbukkit.CraftChunk craftChunk = (org.bukkit.craftbukkit.CraftChunk) chunk;
-                LevelChunk nmsChunk = (LevelChunk) craftChunk.getHandle(ChunkStatus.FULL);
-
-                if (nmsChunk != null) {
-                    if (DEBUG) {
-                        logger.info("[EH] Loaded chunk {},{} from disk", chunkX, chunkZ);
-                    }
-                    long chunkKey = ChunkUtils.packChunkKey(chunkX, chunkZ);
-                    cacheChunkInMemory(chunkKey, nmsChunk);
-                    sendChunkPacket(player, nmsChunk, key, sentTracker);
-                } else {
-                    if (DEBUG) {
-                        logger.info("[EH] Chunk {},{} loaded but not full, generating", chunkX, chunkZ);
-                    }
-                    generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
-                }
-            } catch (Exception e) {
-                if (DEBUG) {
-                    logger.warn("[EH] Failed to process disk chunk {},{}, falling back to generation: {}",
-                            chunkX, chunkZ, e.getMessage());
-                }
-                generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
-            }
-        }, chunkProcessor).exceptionally(throwable -> {
-            if (DEBUG) {
-                logger.warn("[EH] Failed to load chunk from disk {},{}, falling back to generation: {}",
-                        chunkX, chunkZ, throwable.getMessage());
-            }
-            generateChunkAndSend(player, world, chunkX, chunkZ, key, sentTracker);
-            return null;
-        });
-    }
-
-    /**
      * Generates a new chunk and sends it to the player
      * This is the slowest method and should be the last resort
      */
@@ -767,26 +860,8 @@ public class FakeChunkService {
     private final Map<Integer, java.util.BitSet[]> lightMaskCache = new ConcurrentHashMap<>();
 
     /**
-     * Gets or creates light masks for a given section count
-     * Returns [skyLight, blockLight] BitSets
-     */
-    private java.util.BitSet[] getLightMasks(int sectionCount) {
-        return lightMaskCache.computeIfAbsent(sectionCount, count -> {
-            java.util.BitSet skyLight = new java.util.BitSet();
-            java.util.BitSet blockLight = new java.util.BitSet();
-
-            for (int i = 0; i < count; i++) {
-                skyLight.set(i);
-                blockLight.set(i);
-            }
-
-            return new java.util.BitSet[] { skyLight, blockLight };
-        });
-    }
-
-    /**
-     * Sends a chunk packet to the player
-     * This is the common method used by all loading strategies
+     * Enqueues a chunk packet to be sent to the player
+     * Packets are created here in async thread and queued for sending
      */
     private void sendChunkPacket(Player player, LevelChunk nmsChunk, long key, Set<Long> sentTracker) {
         net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = null;
@@ -794,20 +869,17 @@ public class FakeChunkService {
             net.minecraft.world.level.lighting.LevelLightEngine lightEngine = nmsChunk.getLevel().getLightEngine();
             int sectionCount = nmsChunk.getSections().length;
             java.util.BitSet[] lightMasks = getLightMasks(sectionCount);
-            java.util.BitSet skyLight = lightMasks[0];
-            java.util.BitSet blockLight = lightMasks[1];
 
-            if (packetConstructorHandle != null) {
-                packet = (net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket) packetConstructorHandle
-                        .invoke(
-                                nmsChunk,
-                                lightEngine,
-                                skyLight,
-                                blockLight);
-            }
+            @SuppressWarnings("deprecation")
+            net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket createdPacket = new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
+                    nmsChunk,
+                    lightEngine,
+                    lightMasks[0],
+                    lightMasks[1]);
+            packet = createdPacket;
         } catch (Throwable e) {
             if (DEBUG)
-                logger.error("[EH] Failed to instantiate chunk packet async", e);
+                logger.error("[EH] Failed to create chunk packet", e);
             generatingChunks.remove(key);
             return;
         }
@@ -817,10 +889,8 @@ public class FakeChunkService {
             return;
         }
 
-        final net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket finalPacket = packet;
-
         pendingPackets.computeIfAbsent(player.getUniqueId(), k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
-                .add(finalPacket);
+                .add(packet);
 
         sentTracker.add(key);
         generatingChunks.remove(key);
@@ -828,7 +898,7 @@ public class FakeChunkService {
         if (DEBUG) {
             int chunkX = ChunkUtils.unpackX(key);
             int chunkZ = ChunkUtils.unpackZ(key);
-            logger.info("[EH] Queued fake chunk {},{} for {}", chunkX, chunkZ, player.getName());
+            logger.info("[EH] Queued chunk packet {},{} for {}", chunkX, chunkZ, player.getName());
         }
     }
 

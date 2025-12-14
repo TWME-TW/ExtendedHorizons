@@ -34,6 +34,10 @@ public record MainConfig(
                         @Setting("chunk-processor-threads") int chunkProcessorThreads,
                         @Setting("chunk-process-interval") int chunkProcessInterval,
                         @Setting("teleport-warmup-delay") int teleportWarmupDelay,
+                        @Setting("max-mspt-for-loading") double maxMsptForLoading,
+                        @Setting("max-async-load-tasks") int maxAsyncLoadTasks,
+                        @Setting("max-async-load-queue") int maxAsyncLoadQueue,
+                        @Setting("max-generations-per-tick") int maxGenerationsPerTick,
                         @Setting("fake-chunks") FakeChunksConfig fakeChunks,
                         @Setting("occlusion-culling") OcclusionCullingConfig occlusionCulling) {
                 @ConfigSerializable
@@ -84,6 +88,8 @@ public record MainConfig(
                         @Setting("skip-redundant-packets") boolean skipRedundantPackets,
                         @Setting("max-fake-chunks-per-tick") int maxFakeChunksPerTick,
                         @Setting("max-bandwidth-per-player") int maxBandwidthPerPlayer,
-                        @Setting("adaptive-rate-limiting") boolean adaptiveRateLimiting) {
+                        @Setting("adaptive-rate-limiting") boolean adaptiveRateLimiting,
+                        @Setting("measure-actual-packet-size") boolean measureActualPacketSize,
+                        @Setting("estimated-packet-size") int estimatedPacketSize) {
         }
 }

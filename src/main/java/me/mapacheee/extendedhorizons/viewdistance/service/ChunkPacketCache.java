@@ -3,6 +3,7 @@ package me.mapacheee.extendedhorizons.viewdistance.service;
 import com.google.inject.Inject;
 import com.thewinterframework.service.annotation.Service;
 import com.thewinterframework.service.annotation.lifecycle.OnDisable;
+import com.thewinterframework.service.annotation.lifecycle.OnEnable;
 import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService;
 import org.slf4j.Logger;
@@ -37,6 +38,10 @@ public class ChunkPacketCache {
     public ChunkPacketCache(ConfigService configService, SchedulerService schedulerService) {
         this.configService = configService;
         this.schedulerService = schedulerService;
+    }
+
+    @OnEnable
+    public void onEnable() {
         startCleanupTask();
     }
 
