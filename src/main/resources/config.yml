@@ -38,6 +38,16 @@ performance:
   # Teleport warmup delay in milliseconds to load fake chunks
   teleport-warmup-delay: 1600 # in milliseconds
 
+  # MSPT Protection: Pause fake chunk loading if server is lagging
+  max-mspt-for-loading: 45.0
+
+  # Async Task Throttling: Limit concurrent chunk loading tasks
+  max-async-load-tasks: 4
+  max-async-load-queue: 10
+
+  # Generation Limiter: Strict limit on chunks generated per tick
+  max-generations-per-tick: 1
+
   # Fake chunks system (packets cache)
   fake-chunks:
     # Enable packet cache system
@@ -70,10 +80,16 @@ bandwidth-saver:
   max-fake-chunks-per-tick: 22
   # Maximum bandwidth per player in KB/s (512 KB/s = ~4 Mbps)
   # Set to 0 to disable bandwidth limiting
-  max-bandwidth-per-player: 512
+  max-bandwidth-per-player: 10000
   # Enable adaptive rate limiting based on player ping
   # Reduces packet rate for high-ping players to prevent packet loss
   adaptive-rate-limiting: true
+  # Use real packet size measurement (slightly more CPU, very accurate)
+  # Recommended: true for accurate bandwidth tracking
+  measure-actual-packet-size: true
+  # Fallback estimate if measurement disabled (in bytes)
+  # Average chunk packet is ~50KB (mountains can be 100KB+)
+  estimated-packet-size: 50000
 
 # Database (SQLite) used for player view persistence
 database:
