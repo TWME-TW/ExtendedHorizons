@@ -128,8 +128,8 @@ public class ViewDistanceService {
      * @throws IllegalArgumentException if player is null or not online
      */
     public void setPlayerDistance(Player player, int requestedDistance) {
-        if (player == null || !player.isOnline()) {
-            throw new IllegalArgumentException("Player must not be null and must be online");
+        if (player == null) {
+            throw new IllegalArgumentException("Player must not be null");
         }
 
         if (!isPluginEnabledForWorld(player.getWorld())) {

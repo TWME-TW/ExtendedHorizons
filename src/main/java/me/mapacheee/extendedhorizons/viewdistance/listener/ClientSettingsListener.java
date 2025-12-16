@@ -19,9 +19,15 @@ public class ClientSettingsListener implements Listener {
 
     @EventHandler
     public void onClientOptionsChange(PlayerClientOptionsChangeEvent event) {
+        if (event.getPlayer() == null)
+            return;
+
         if (event.hasViewDistanceChanged()) {
             int newDistance = event.getViewDistance();
-            viewDistanceService.setPlayerDistance(event.getPlayer(), newDistance);
+            try {
+                viewDistanceService.setPlayerDistance(event.getPlayer(), newDistance);
+            } catch (IllegalArgumentException ignored) {
+            }
         }
     }
 }
