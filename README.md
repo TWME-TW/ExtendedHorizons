@@ -54,12 +54,22 @@ world-settings:
 
 # Performance settings
 performance:
-  # Maximum chunks to load per tick (for async loading)
-  max-chunks-per-tick: 20
-  
   # Number of threads for parallel chunk processing (0 = auto-detect based on CPU cores)
   # Recommended: 0 (auto) or 4-8 for most servers
   chunk-processor-threads: 0
+  
+  # Teleport warmup delay in milliseconds to load fake chunks
+  teleport-warmup-delay: 1600 # in milliseconds
+
+  # MSPT Protection: Pause fake chunk loading if server is lagging
+  max-mspt-for-loading: 45.0
+
+  # Async Task Throttling: Limit concurrent chunk loading tasks
+  max-async-load-tasks: 4
+  max-async-load-queue: 10
+
+  # Generation Limiter: Strict limit on chunks generated per tick
+  max-generations-per-tick: 1
 
   # Fake chunks system (packets cache)
   fake-chunks:
@@ -70,13 +80,39 @@ performance:
     # Enable GZIP compression for packets (slower but saves RAM)
     use-compression: false
     # Cache cleanup interval in seconds
-    cache-cleanup-interval: 20
-    # Enable NMS chunk memory cache (reuses loaded chunks, saves CPU but uses RAM)
+    cache-cleanup-interval: 10
+    # Enable chunk memory cache (reuses loaded chunks, saves CPU but uses RAM)
     # Recommended: true for <50 players, false for >100 players or low RAM servers
-    enable-memory-cache: true
+    enable-memory-cache: false
     # Maximum chunks to cache in memory (1000 = ~40-80MB depending on chunk complexity)
     # Increase for more players in same area, decrease for dispersed players or low RAM
     max-memory-cache-size: 1000
+  
+  occlusion-culling:
+    enabled: true
+    sky-light-threshold: 14
+    max-y-level: 320
+    min-y-level: -64
+
+# Bandwidth Saver settings
+bandwidth-saver:
+  enabled: true
+  # Skips redundant entity movement/rotation packets (ESU-inspired)
+  skip-redundant-packets: true
+  # Limits the rate of fake chunk sending to prevent network saturation
+  max-fake-chunks-per-tick: 22
+  # Maximum bandwidth per player in KB/s (512 KB/s = ~4 Mbps)
+  # Set to 0 to disable bandwidth limiting
+  max-bandwidth-per-player: 10000
+  # Enable adaptive rate limiting based on player ping
+  # Reduces packet rate for high-ping players to prevent packet loss
+  adaptive-rate-limiting: true
+  # Use real packet size measurement (slightly more CPU, very accurate)
+  # Recommended: true for accurate bandwidth tracking
+  measure-actual-packet-size: true
+  # Fallback estimate if measurement disabled (in bytes)
+  # Average chunk packet is ~50KB (mountains can be 100KB+)
+  estimated-packet-size: 50000
 
 # Database (SQLite) used for player view persistence
 database:
@@ -94,7 +130,7 @@ integrations:
 # Message toggles (actual texts live in messages.yml)
 messages:
   welcome-message:
-    enabled: true
+    enabled: false
 ```
 ## Messages
 - All texts are in **messages.yml**, with MiniMessage support.
