@@ -241,6 +241,7 @@ public class ViewDistanceService {
                             borderCenterZ, borderSize);
 
                     if (configService.get().performance().fakeChunks().enabled()
+                            && fakeChunkService.isFakeChunksEnabledForWorld(player.getWorld())
                             && !classification.fakeChunks.isEmpty()) {
                         fakeChunkService.sendFakeChunks(player, classification.fakeChunks, borderCenterX, borderCenterZ,
                                 borderSize);
@@ -288,6 +289,7 @@ public class ViewDistanceService {
                             borderCenterZ, borderSize);
 
                     if (configService.get().performance().fakeChunks().enabled()
+                            && fakeChunkService.isFakeChunksEnabledForWorld(player.getWorld())
                             && !classification.fakeChunks.isEmpty()) {
                         fakeChunkService.sendFakeChunks(player, classification.fakeChunks, borderCenterX, borderCenterZ,
                                 borderSize);

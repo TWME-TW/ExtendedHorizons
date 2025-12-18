@@ -1024,7 +1024,7 @@ public class FakeChunkService {
      * @param world The world to check
      * @return true if fake chunks are enabled for this world
      */
-    private boolean isFakeChunksEnabledForWorld(org.bukkit.World world) {
+    public boolean isFakeChunksEnabledForWorld(org.bukkit.World world) {
         String worldName = world.getName();
         java.util.Map<String, me.mapacheee.extendedhorizons.shared.config.MainConfig.WorldConfig> worldSettings = configService
                 .get().worldSettings();
