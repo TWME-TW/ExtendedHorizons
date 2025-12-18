@@ -54,6 +54,9 @@ public class PacketService {
 
         lastSentChunkRadius.put(uuid, radius);
         ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
+        if (nmsPlayer.connection == null) {
+            return;
+        }
         nmsPlayer.connection.send(new ClientboundSetChunkCacheRadiusPacket(radius));
     }
 
@@ -62,6 +65,9 @@ public class PacketService {
      */
     public void ensureClientCenter(Player player) {
         ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
+        if (nmsPlayer.connection == null) {
+            return;
+        }
         int cx = player.getLocation().getBlockX() >> 4;
         int cz = player.getLocation().getBlockZ() >> 4;
         nmsPlayer.connection.send(new ClientboundSetChunkCacheCenterPacket(cx, cz));
@@ -83,6 +89,9 @@ public class PacketService {
 
         lastSentSimulationDistance.put(uuid, distance);
         ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
+        if (nmsPlayer.connection == null) {
+            return;
+        }
         nmsPlayer.connection.send(new ClientboundSetSimulationDistancePacket(distance));
     }
 

@@ -931,12 +931,32 @@ public class FakeChunkService {
      */
     public void clearPlayerFakeChunks(Player player) {
         UUID playerId = player.getUniqueId();
-        playerFakeChunks.remove(playerId);
+        Set<Long> fakeChunks = playerFakeChunks.remove(playerId);
+
+        if (fakeChunks != null && !fakeChunks.isEmpty()) {
+            for (Long key : fakeChunks) {
+                int chunkX = me.mapacheee.extendedhorizons.shared.utils.ChunkUtils.unpackX(key);
+                int chunkZ = me.mapacheee.extendedhorizons.shared.utils.ChunkUtils.unpackZ(key);
+                sendUnloadPacket(player, chunkX, chunkZ);
+            }
+        }
+
         playerChunkQueues.remove(playerId);
-        playerChunksProcessedThisTick.remove(playerId);
         playerChunksProcessedThisTick.remove(playerId);
         lastChunkPosition.remove(playerId);
         warmupStartTimes.remove(playerId);
+    }
+
+    /**
+     * Sends an unload packet to the client for a specific chunk
+     */
+    private void sendUnloadPacket(Player player, int chunkX, int chunkZ) {
+        try {
+            net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket packet = new net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket(
+                    new net.minecraft.world.level.ChunkPos(chunkX, chunkZ));
+            ((org.bukkit.craftbukkit.entity.CraftPlayer) player).getHandle().connection.send(packet);
+        } catch (Exception e) {
+        }
     }
 
     /**
