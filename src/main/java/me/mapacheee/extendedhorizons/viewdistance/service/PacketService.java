@@ -241,4 +241,13 @@ public class PacketService {
             }
         }
     }
+
+    /**
+     * Resets cache for a player
+     */
+    public void resetPlayer(Player player) {
+        java.util.UUID uuid = player.getUniqueId();
+        lastSentChunkRadius.remove(uuid);
+        lastSentSimulationDistance.remove(uuid);
+    }
 }

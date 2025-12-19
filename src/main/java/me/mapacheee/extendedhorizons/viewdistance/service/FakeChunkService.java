@@ -10,7 +10,6 @@ import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.bukkit.Bukkit;
-import org.bukkit.Chunk;
 import org.bukkit.World;
 import org.bukkit.craftbukkit.CraftChunk;
 import org.bukkit.craftbukkit.CraftWorld;
@@ -151,13 +150,12 @@ public class FakeChunkService {
     /**
      * Cleans up player data when they quit or change worlds
      */
+    public void cleanupPlayer(Player player, boolean sendPackets) {
+        clearPlayerFakeChunks(player, sendPackets);
+    }
+
     public void cleanupPlayer(Player player) {
-        UUID uuid = player.getUniqueId();
-        playerChunkQueues.remove(uuid);
-        playerFakeChunks.remove(uuid);
-        lastChunkPosition.remove(uuid);
-        warmupStartTimes.put(uuid, System.currentTimeMillis());
-        playerChunksProcessedThisTick.remove(uuid);
+        cleanupPlayer(player, true);
     }
 
     /**
@@ -928,12 +926,16 @@ public class FakeChunkService {
 
     /**
      * Clears fake chunks for a player
+     * 
+     * @param player      The player to clear chunks for
+     * @param sendPackets If true, sends unload packets to client. False if player
+     *                    quit or changed worlds
      */
-    public void clearPlayerFakeChunks(Player player) {
+    public void clearPlayerFakeChunks(Player player, boolean sendPackets) {
         UUID playerId = player.getUniqueId();
         Set<Long> fakeChunks = playerFakeChunks.remove(playerId);
 
-        if (fakeChunks != null && !fakeChunks.isEmpty()) {
+        if (sendPackets && fakeChunks != null && !fakeChunks.isEmpty()) {
             for (Long key : fakeChunks) {
                 int chunkX = me.mapacheee.extendedhorizons.shared.utils.ChunkUtils.unpackX(key);
                 int chunkZ = me.mapacheee.extendedhorizons.shared.utils.ChunkUtils.unpackZ(key);
@@ -945,6 +947,10 @@ public class FakeChunkService {
         playerChunksProcessedThisTick.remove(playerId);
         lastChunkPosition.remove(playerId);
         warmupStartTimes.remove(playerId);
+    }
+
+    public void clearPlayerFakeChunks(Player player) {
+        clearPlayerFakeChunks(player, true);
     }
 
     /**

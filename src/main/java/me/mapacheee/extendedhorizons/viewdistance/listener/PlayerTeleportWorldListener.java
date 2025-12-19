@@ -26,7 +26,8 @@ public class PlayerTeleportWorldListener implements Listener {
 
     @EventHandler
     public void onTeleport(PlayerTeleportEvent event) {
-        fakeChunkService.cleanupPlayer(event.getPlayer());
+        boolean isSameWorld = event.getFrom().getWorld().equals(event.getTo().getWorld());
+        fakeChunkService.cleanupPlayer(event.getPlayer(), isSameWorld);
 
         event.getPlayer().getScheduler().run(
                 me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
@@ -53,7 +54,11 @@ public class PlayerTeleportWorldListener implements Listener {
 
     @EventHandler
     public void onWorldChange(PlayerChangedWorldEvent event) {
-        fakeChunkService.clearPlayerFakeChunks(event.getPlayer());
+        fakeChunkService.cleanupPlayer(event.getPlayer(), false);
+
+        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getService(
+                me.mapacheee.extendedhorizons.viewdistance.service.PacketService.class)
+                .resetPlayer(event.getPlayer());
 
         event.getPlayer().getScheduler().run(
                 me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
@@ -66,6 +71,7 @@ public class PlayerTeleportWorldListener implements Listener {
                                 (innerTask) -> {
                                     if (event.getPlayer().isOnline()) {
                                         viewDistanceService.updatePlayerView(event.getPlayer());
+                                        fakeChunkService.onPlayerJoin(event.getPlayer());
                                     }
                                 },
                                 null, 40L);
