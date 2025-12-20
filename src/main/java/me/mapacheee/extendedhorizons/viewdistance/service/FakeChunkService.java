@@ -947,6 +947,13 @@ public class FakeChunkService {
         playerChunksProcessedThisTick.remove(playerId);
         lastChunkPosition.remove(playerId);
         warmupStartTimes.remove(playerId);
+        pendingPackets.remove(playerId);
+        playerBytesThisSecond.remove(playerId);
+        playerByteResetTime.remove(playerId);
+        playerAvgPing.remove(playerId);
+        playerActualBytesSent.remove(playerId);
+        playerAvgPacketSize.remove(playerId);
+        playerBytesThisTick.remove(playerId);
     }
 
     public void clearPlayerFakeChunks(Player player) {

@@ -7,6 +7,7 @@ import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import me.mapacheee.extendedhorizons.shared.service.MessageService;
 import me.mapacheee.extendedhorizons.shared.storage.PlayerStorageService;
 import me.mapacheee.extendedhorizons.viewdistance.entity.PlayerView;
+import me.mapacheee.extendedhorizons.viewdistance.listener.PlayerMovementListener;
 
 import org.bukkit.entity.Player;
 import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
@@ -31,6 +32,7 @@ public class ViewDistanceService {
     private final LuckPermsService luckPermsService;
     private final MessageService messageService;
     private final OcclusionCullingService occlusionCullingService;
+    private final PlayerMovementListener movementListener;
 
     @Inject
     public ViewDistanceService(ConfigService configService,
@@ -40,7 +42,8 @@ public class ViewDistanceService {
             PacketService packetService,
             LuckPermsService luckPermsService,
             MessageService messageService,
-            OcclusionCullingService occlusionCullingService) {
+            OcclusionCullingService occlusionCullingService,
+            PlayerMovementListener movementListener) {
         this.configService = configService;
         this.storageService = storageService;
         this.chunkService = chunkService;
@@ -49,6 +52,7 @@ public class ViewDistanceService {
         this.luckPermsService = luckPermsService;
         this.messageService = messageService;
         this.occlusionCullingService = occlusionCullingService;
+        this.movementListener = movementListener;
     }
 
     /**
@@ -117,6 +121,8 @@ public class ViewDistanceService {
         }
 
         fakeChunkService.clearPlayerFakeChunks(player);
+        packetService.cleanupPlayer(player);
+        movementListener.cleanupPlayer(player.getUniqueId());
     }
 
     /**

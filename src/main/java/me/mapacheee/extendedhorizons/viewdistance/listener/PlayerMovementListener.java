@@ -85,4 +85,12 @@ public class PlayerMovementListener implements Listener {
             viewDistanceService.updatePlayerView(event.getPlayer());
         }
     }
+
+    /**
+     * Cleans up player tracking data on quit
+     */
+    public void cleanupPlayer(UUID playerId) {
+        lastUpdateTime.remove(playerId);
+        lastChunkPos.remove(playerId);
+    }
 }

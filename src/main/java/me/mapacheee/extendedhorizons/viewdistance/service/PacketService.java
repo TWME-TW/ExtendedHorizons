@@ -243,6 +243,15 @@ public class PacketService {
     }
 
     /**
+     * Cleans up all player data on quit
+     */
+    public void cleanupPlayer(Player player) {
+        java.util.UUID uuid = player.getUniqueId();
+        lastSentChunkRadius.remove(uuid);
+        lastSentSimulationDistance.remove(uuid);
+    }
+
+    /**
      * Resets cache for a player
      */
     public void resetPlayer(Player player) {
