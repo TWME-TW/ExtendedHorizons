@@ -2,6 +2,7 @@ plugins {
     id 'java-library'
     id 'com.gradleup.shadow' version '9.2.2'
     id 'io.papermc.paperweight.userdev' version '2.0.0-beta.19'
+    id 'checkstyle'
 }
 
 group = 'me.mapacheee'
@@ -52,13 +53,19 @@ repositories {
 
 dependencies {
     // Winter Framework
-    api("com.thewinterframework:paper:1.0.4")
+    api("com.thewinterframework:paper:1.0.4") {
+        exclude group: 'io.papermc.paper', module: 'paper-api'
+    }
     annotationProcessor("com.thewinterframework:paper:1.0.4")
     
-    api('com.thewinterframework:configuration:1.0.2')
+    api('com.thewinterframework:configuration:1.0.2') {
+        exclude group: 'io.papermc.paper', module: 'paper-api'
+    }
     annotationProcessor('com.thewinterframework:configuration:1.0.2')
     
-    api('com.thewinterframework:command:1.0.1')
+    api('com.thewinterframework:command:1.0.1') {
+        exclude group: 'io.papermc.paper', module: 'paper-api'
+    }
     annotationProcessor('com.thewinterframework:command:1.0.1')
     
     // Paper API
@@ -112,3 +119,10 @@ processResources {
         expand project.properties
     }
 }
+
+checkstyle {
+    toolVersion = '10.12.5'
+    configFile = file('checkstyle.xml')
+    ignoreFailures = true
+}
+
