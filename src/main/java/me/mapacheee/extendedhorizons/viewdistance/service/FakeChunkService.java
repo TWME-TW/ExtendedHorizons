@@ -671,6 +671,22 @@ public class FakeChunkService {
             }
         }
 
+        if (!toSend.isEmpty()) {
+            if (DEBUG) {
+                logger.info("[EH] Sending {} cached chunks to {}", toSend.size(), player.getName());
+            }
+
+            for (long key : toSend) {
+                int chunkX = ChunkUtils.unpackX(key);
+                int chunkZ = ChunkUtils.unpackZ(key);
+                Column cachedColumn = columnCache.get(chunkX, chunkZ);
+
+                if (cachedColumn != null && sendColumnToPlayer(player, cachedColumn)) {
+                    playerSentChunks.add(key);
+                }
+            }
+        }
+
         if (!toGenerate.isEmpty()) {
             toGenerate.sort((key1, key2) -> {
                 int x1 = ChunkUtils.unpackX(key1);
