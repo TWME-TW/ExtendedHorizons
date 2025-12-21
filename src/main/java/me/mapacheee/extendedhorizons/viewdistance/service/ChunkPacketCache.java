@@ -5,8 +5,10 @@ import com.thewinterframework.service.annotation.Service;
 import com.thewinterframework.service.annotation.lifecycle.OnDisable;
 import com.thewinterframework.service.annotation.lifecycle.OnEnable;
 import me.mapacheee.extendedhorizons.shared.service.ConfigService;
-import me.mapacheee.extendedhorizons.shared.scheduler.SchedulerService;
+import org.bukkit.Bukkit;
 import org.slf4j.Logger;
+
+import java.util.concurrent.TimeUnit;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -24,7 +26,6 @@ public class ChunkPacketCache {
 
     private static final Logger logger = org.slf4j.LoggerFactory.getLogger(ChunkPacketCache.class);
     private final ConfigService configService;
-    private final SchedulerService schedulerService;
 
     private final Map<Long, byte[]> packetCache = new ConcurrentHashMap<>();
 
@@ -35,9 +36,8 @@ public class ChunkPacketCache {
     private long totalPacketsSaved = 0;
 
     @Inject
-    public ChunkPacketCache(ConfigService configService, SchedulerService schedulerService) {
+    public ChunkPacketCache(ConfigService configService) {
         this.configService = configService;
-        this.schedulerService = schedulerService;
     }
 
     @OnEnable
@@ -154,11 +154,14 @@ public class ChunkPacketCache {
      */
     private void startCleanupTask() {
         int intervalSeconds = configService.get().performance().fakeChunks().cacheCleanupInterval();
+        long intervalMs = intervalSeconds * 1000L;
 
-        schedulerService.runAsyncTimer(
-                this::performCleanup,
-                intervalSeconds * 20L,
-                intervalSeconds * 20L);
+        Bukkit.getAsyncScheduler().runAtFixedRate(
+                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                (task) -> performCleanup(),
+                intervalMs,
+                intervalMs,
+                TimeUnit.MILLISECONDS);
     }
 
     /**

@@ -1,6 +1,7 @@
 package me.mapacheee.extendedhorizons.viewdistance.listener;
 
 import com.google.inject.Inject;
+import com.google.inject.Provider;
 import com.thewinterframework.paper.listener.ListenerComponent;
 import me.mapacheee.extendedhorizons.viewdistance.service.ViewDistanceService;
 import org.bukkit.Bukkit;
@@ -19,15 +20,15 @@ import java.util.concurrent.ConcurrentHashMap;
 @ListenerComponent
 public class PlayerMovementListener implements Listener {
 
-    private final ViewDistanceService viewDistanceService;
+    private final Provider<ViewDistanceService> viewDistanceServiceProvider;
     private final Map<UUID, Long> lastUpdateTime = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastChunkPos = new ConcurrentHashMap<>();
 
     private static final long UPDATE_COOLDOWN_MS = 1000;
 
     @Inject
-    public PlayerMovementListener(ViewDistanceService viewDistanceService) {
-        this.viewDistanceService = viewDistanceService;
+    public PlayerMovementListener(Provider<ViewDistanceService> viewDistanceServiceProvider) {
+        this.viewDistanceServiceProvider = viewDistanceServiceProvider;
     }
 
     @EventHandler
@@ -74,12 +75,14 @@ public class PlayerMovementListener implements Listener {
         int dZ = Math.abs(toChunkZ - fromChunkZ);
         int cheb = Math.max(dX, dZ);
 
+        ViewDistanceService viewDistanceService = viewDistanceServiceProvider.get();
+
         if (cheb >= 3) {
             viewDistanceService.updatePlayerViewFast(event.getPlayer());
             Bukkit.getScheduler().runTaskLater(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin
                     .getPlugin(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class), () -> {
                         if (event.getPlayer().isOnline())
-                            viewDistanceService.updatePlayerView(event.getPlayer());
+                            viewDistanceServiceProvider.get().updatePlayerView(event.getPlayer());
                     }, 5L);
         } else {
             viewDistanceService.updatePlayerView(event.getPlayer());
