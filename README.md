@@ -32,6 +32,17 @@
 ## Config
 
 ```yml
+########################################################
+#                                                      #
+#         ExtendedHorizons V2 Configuration            #
+#                                                      #
+#          Support the project starring it!            #
+#     https://github.com/Mapacheee/ExtendedHorizons    #
+#                                                      #
+#   Join our Discord:  https://discord.gg/yA3vD2S8Zj   #
+#                                                      #
+########################################################
+
 # Global view distance limits and defaults
 # Note: The minimum distance is automatically set to the server's view-distance from server.properties
 view-distance:
@@ -87,6 +98,20 @@ performance:
     # Maximum chunks to cache in memory (1000 = ~40-80MB depending on chunk complexity)
     # Increase for more players in same area, decrease for dispersed players or low RAM
     max-memory-cache-size: 1000
+    
+    # Anti-X-Ray for fake chunks
+
+    # Enable this feature will affect the speed to load fake chunks
+    # Enable this only if its necessary
+    anti-xray:
+      # Enable anti-xray obfuscation for fake chunks
+      enabled: false
+      # Replace valuable ores with stone/deepslate
+      hide-ores: true
+      # Add fake ores to confuse x-ray users
+      add-fake-ores: true
+      # Density of fake ores (0.0-1.0, higher = more fakes)
+      fake-ore-density: 0.15
   
   occlusion-culling:
     enabled: true
