@@ -186,14 +186,17 @@ public class FakeChunkService {
 
                     maxBytesPerTick = (bandwidthPerPlayer * 1024) / 20;
 
-                    double mspt = Bukkit.getAverageTickTime();
-                    double maxMspt = configService.get().performance().maxMsptForLoading();
-                    if (maxMspt > 0 && mspt > maxMspt) {
-                        if (DEBUG) {
-                            logger.warn("[EH] High MSPT ({}ms > {}ms), skipping chunk loading",
-                                    String.format("%.2f", mspt), maxMspt);
+                    try {
+                        double mspt = Bukkit.getAverageTickTime();
+                        double maxMspt = configService.get().performance().maxMsptForLoading();
+                        if (maxMspt > 0 && mspt > maxMspt) {
+                            if (DEBUG) {
+                                logger.warn("[EH] High MSPT ({}ms > {}ms), skipping chunk loading",
+                                        String.format("%.2f", mspt), maxMspt);
+                            }
+                            return;
                         }
-                        return;
+                    } catch (UnsupportedOperationException ignored) {
                     }
 
                     int activeTasks = ((java.util.concurrent.ThreadPoolExecutor) chunkProcessor).getActiveCount();
