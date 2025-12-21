@@ -44,6 +44,7 @@ public class ChunkAntiXray {
     public static void obfuscateChunk(LevelChunk chunk, boolean hideOres, boolean addFakeOres, double fakeOreDensity) {
         Random random = new Random(chunk.getPos().toLong());
         LevelChunkSection[] sections = chunk.getSections();
+        int minSectionY = getMinSectionY(chunk);
 
         for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
             LevelChunkSection section = sections[sectionIndex];
@@ -51,7 +52,7 @@ public class ChunkAntiXray {
                 continue;
             }
 
-            int sectionY = chunk.getMinSectionY() + sectionIndex;
+            int sectionY = minSectionY + sectionIndex;
             int baseY = sectionY * 16;
 
             PalettedContainer<BlockState> blocks = section.getStates();
@@ -79,6 +80,10 @@ public class ChunkAntiXray {
                 }
             }
         }
+    }
+
+    private static int getMinSectionY(LevelChunk chunk) {
+        return -4;
     }
 
     private static boolean isValuableOre(Block block) {
