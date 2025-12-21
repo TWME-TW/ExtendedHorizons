@@ -69,11 +69,11 @@ dependencies {
     annotationProcessor('com.thewinterframework:command:1.0.1')
     
     // Paper API
-    compileOnly('io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT')
+    //compileOnly('io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT')
     paperweight.paperDevBundle("1.21.11-R0.1-SNAPSHOT")
 
     // PacketEvents
-    compileOnly("com.github.retrooper:packetevents-spigot:2.11.0")
+    compileOnly("com.github.retrooper:packetevents-spigot:2.11.1")
 
     // SQLite
     compileOnly("org.xerial:sqlite-jdbc:3.7.2")
@@ -82,10 +82,7 @@ dependencies {
     compileOnly("me.clip:placeholderapi:2.11.6")
 
     // LuckPerms API
-    compileOnly("net.luckperms:api:5.4")
-
-    // Utils
-    implementation 'org.jetbrains:annotations:24.1.0'
+    compileOnly("net.luckperms:api:5.4")    
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -96,17 +93,42 @@ tasks.withType(JavaCompile).configureEach {
 shadowJar {
     relocate 'org.h2', 'me.mapacheee.extendedhorizons.libs.h2'
     relocate 'com.thewinterframework', 'me.mapacheee.extendedhorizons.libs.winter'
+    relocate 'com.google.inject', 'me.mapacheee.extendedhorizons.libs.guice'
+    relocate 'com.google.common', 'me.mapacheee.extendedhorizons.libs.guava'
+    relocate 'org.checkerframework', 'me.mapacheee.extendedhorizons.libs.checkerframework'
+    relocate 'javax.inject', 'me.mapacheee.extendedhorizons.libs.inject'
+    relocate 'aopalliance', 'me.mapacheee.extendedhorizons.libs.aopalliance'
 
     exclude 'META-INF/MANIFEST.MF'
     exclude 'META-INF/*.SF'
     exclude 'META-INF/*.DSA'
     exclude 'META-INF/*.RSA'
+    exclude 'META-INF/versions/**'
+    exclude 'META-INF/maven/**'
+    exclude 'META-INF/proguard/**'
+    exclude 'META-INF/native-image/**'
+    exclude 'module-info.class'
+    exclude '**/module-info.class'
+    exclude 'META-INF/*.kotlin_module'
+    
+    mergeServiceFiles()
+    
+    manifest {
+        attributes(
+            'Implementation-Title': project.name,
+            'Implementation-Version': project.version,
+            'Multi-Release': 'false'
+        )
+    }
 
     archiveBaseName = 'ExtendedHorizons'
     archiveClassifier = ''
     archiveVersion = project.version
 
     configurations = [project.configurations.runtimeClasspath]
+    
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
 }
 
 tasks.build {
@@ -115,7 +137,7 @@ tasks.build {
 
 processResources {
     filteringCharset = 'UTF-8'
-    filesMatching(['plugin.yml', 'paper-plugin.yml']) {
+    filesMatching('plugin.yml') {
         expand project.properties
     }
 }
