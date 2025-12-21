@@ -47,7 +47,16 @@ public record MainConfig(
                                 @Setting("use-compression") boolean useCompression,
                                 @Setting("cache-cleanup-interval") int cacheCleanupInterval,
                                 @Setting("enable-memory-cache") boolean enableMemoryCache,
-                                @Setting("max-memory-cache-size") int maxMemoryCacheSize) {
+                                @Setting("max-memory-cache-size") int maxMemoryCacheSize,
+                                @Setting("anti-xray") AntiXrayConfig antiXray) {
+
+                        @ConfigSerializable
+                        public record AntiXrayConfig(
+                                        boolean enabled,
+                                        @Setting("hide-ores") boolean hideOres,
+                                        @Setting("add-fake-ores") boolean addFakeOres,
+                                        @Setting("fake-ore-density") double fakeOreDensity) {
+                        }
                 }
 
                 @ConfigSerializable

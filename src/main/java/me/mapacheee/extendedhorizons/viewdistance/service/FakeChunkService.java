@@ -766,7 +766,8 @@ public class FakeChunkService {
      * Attempts to get a chunk from the servers memory cache or our own cache
      */
     private LevelChunk getChunkFromMemoryCache(World world, int chunkX, int chunkZ) {
-        if (!configService.get().performance().fakeChunks().enableMemoryCache()) {
+        boolean antiXrayEnabled = configService.get().performance().fakeChunks().antiXray().enabled();
+        if (!configService.get().performance().fakeChunks().enableMemoryCache() || antiXrayEnabled) {
             return null;
         }
 
@@ -865,6 +866,22 @@ public class FakeChunkService {
      * Packets are created here in async thread and queued for sending
      */
     private void sendChunkPacket(Player player, LevelChunk nmsChunk, long key, Set<Long> sentTracker) {
+        if (configService.get().performance().fakeChunks().antiXray().enabled()) {
+            try {
+                nmsChunk = cloneChunkForObfuscation(nmsChunk);
+
+                boolean hideOres = configService.get().performance().fakeChunks().antiXray().hideOres();
+                boolean addFakeOres = configService.get().performance().fakeChunks().antiXray().addFakeOres();
+                double density = configService.get().performance().fakeChunks().antiXray().fakeOreDensity();
+
+                ChunkAntiXray.obfuscateChunk(nmsChunk, hideOres, addFakeOres, density);
+            } catch (Exception e) {
+                if (DEBUG) {
+                    logger.warn("[EH] Failed to obfuscate chunk: {}", e.getMessage());
+                }
+            }
+        }
+
         net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = null;
         try {
             net.minecraft.world.level.lighting.LevelLightEngine lightEngine = nmsChunk.getLevel().getLightEngine();
@@ -901,6 +918,17 @@ public class FakeChunkService {
             int chunkZ = ChunkUtils.unpackZ(key);
             logger.info("[EH] Queued chunk packet {},{} for {}", chunkX, chunkZ, player.getName());
         }
+    }
+
+    /**
+     * Placeholder for chunk cloning (not needed - memory cache is disabled when
+     * anti-xray is active)
+     */
+    private LevelChunk cloneChunkForObfuscation(LevelChunk original) {
+        // No cloning needed: memory cache is automatically disabled when anti-xray is
+        // enabled
+        // This prevents cached chunks from being permanently obfuscated
+        return original;
     }
 
     /**
