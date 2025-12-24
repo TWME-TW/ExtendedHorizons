@@ -26,12 +26,17 @@ import java.util.*;
 import java.util.Iterator;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import me.mapacheee.extendedhorizons.api.event.FakeChunkLoadEvent;
 import me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent;
 import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 
 /*
  *   Manages fake chunks (chunks beyond server view-distance)
@@ -51,9 +56,8 @@ public class FakeChunkService {
     private final Set<Long> generatingChunks = ConcurrentHashMap.newKeySet();
 
     // Performance counters
-    private final java.util.concurrent.atomic.AtomicInteger chunksGeneratedThisTick = new java.util.concurrent.atomic.AtomicInteger(
-            0);
-    private final java.util.Map<UUID, Long> playerBytesThisTick = new ConcurrentHashMap<>();
+    private final AtomicInteger chunksGeneratedThisTick = new AtomicInteger(0);
+    private final Map<UUID, Long> playerBytesThisTick = new ConcurrentHashMap<>();
 
     // Config values (cached for performance)
     private int maxGenerationsPerTick = 1;
@@ -112,8 +116,8 @@ public class FakeChunkService {
     private final Map<UUID, Double> playerAvgPacketSize = new ConcurrentHashMap<>();
 
     // Scheduled task references for proper cleanup
-    private io.papermc.paper.threadedregions.scheduler.ScheduledTask progressiveLoadingTask;
-    private io.papermc.paper.threadedregions.scheduler.ScheduledTask packetSenderTask;
+    private ScheduledTask progressiveLoadingTask;
+    private ScheduledTask packetSenderTask;
 
     private static final boolean DEBUG = false;
     private static final int TELEPORT_DETECTION_THRESHOLD = 3;
@@ -226,8 +230,8 @@ public class FakeChunkService {
                         } catch (UnsupportedOperationException | NullPointerException ignored) {
                         }
 
-                        int activeTasks = ((java.util.concurrent.ThreadPoolExecutor) chunkProcessor).getActiveCount();
-                        int queueSize = ((java.util.concurrent.ThreadPoolExecutor) chunkProcessor).getQueue().size();
+                        int activeTasks = ((ThreadPoolExecutor) chunkProcessor).getActiveCount();
+                        int queueSize = ((ThreadPoolExecutor) chunkProcessor).getQueue().size();
                         int maxTasks = configService.get().performance().maxAsyncLoadTasks();
                         int maxQueue = configService.get().performance().maxAsyncLoadQueue();
 
@@ -474,7 +478,7 @@ public class FakeChunkService {
             long bytesUsed = playerBytesThisTick.getOrDefault(uuid, 0L);
             if (bytesUsed >= maxBytesPerTick) {
                 generatingChunks.remove(key);
-                playerChunkQueues.computeIfAbsent(uuid, k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
+                playerChunkQueues.computeIfAbsent(uuid, k -> new ConcurrentLinkedQueue<>())
                         .add(key);
                 continue;
             }
@@ -542,7 +546,7 @@ public class FakeChunkService {
                     generatingChunks.remove(key);
                     playerChunkQueues
                             .computeIfAbsent(player.getUniqueId(),
-                                    k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
+                                    k -> new ConcurrentLinkedQueue<>())
                             .add(key);
                     return;
                 }
@@ -564,7 +568,7 @@ public class FakeChunkService {
             if (chunksGeneratedThisTick.get() >= maxGenerationsPerTick) {
                 generatingChunks.remove(key);
                 playerChunkQueues
-                        .computeIfAbsent(player.getUniqueId(), k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
+                        .computeIfAbsent(player.getUniqueId(), k -> new ConcurrentLinkedQueue<>())
                         .add(key);
                 return null;
             }
@@ -670,7 +674,7 @@ public class FakeChunkService {
             });
 
             Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
-                    k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
+                    k -> new ConcurrentLinkedQueue<>());
 
             for (long key : sortedKeys) {
                 if (!queue.contains(key)) {
@@ -737,7 +741,7 @@ public class FakeChunkService {
             });
 
             Queue<Long> queue = playerChunkQueues.computeIfAbsent(uuid,
-                    k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
+                    k -> new ConcurrentLinkedQueue<>());
 
             if (!queue.isEmpty()) {
                 int currentChunkX = player.getLocation().getBlockX() >> 4;
@@ -919,7 +923,7 @@ public class FakeChunkService {
         int chunkX = ChunkUtils.unpackX(key);
         int chunkZ = ChunkUtils.unpackZ(key);
 
-        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        AtomicBoolean cancelled = new AtomicBoolean(false);
         try {
             Bukkit.getScheduler().runTask(
                     me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
@@ -996,7 +1000,7 @@ public class FakeChunkService {
             return;
         }
 
-        pendingPackets.computeIfAbsent(player.getUniqueId(), k -> new java.util.concurrent.ConcurrentLinkedQueue<>())
+        pendingPackets.computeIfAbsent(player.getUniqueId(), k -> new ConcurrentLinkedQueue<>())
                 .add(packet);
 
         sentTracker.add(key);
@@ -1030,7 +1034,7 @@ public class FakeChunkService {
         int chunkX = column.getX();
         int chunkZ = column.getZ();
 
-        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        AtomicBoolean cancelled = new AtomicBoolean(false);
         try {
             Bukkit.getScheduler().runTask(
                     me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
@@ -1092,8 +1096,8 @@ public class FakeChunkService {
 
         if (sendPackets && fakeChunks != null && !fakeChunks.isEmpty()) {
             for (Long key : fakeChunks) {
-                int chunkX = me.mapacheee.extendedhorizons.shared.utils.ChunkUtils.unpackX(key);
-                int chunkZ = me.mapacheee.extendedhorizons.shared.utils.ChunkUtils.unpackZ(key);
+                int chunkX = ChunkUtils.unpackX(key);
+                int chunkZ = ChunkUtils.unpackZ(key);
 
                 FakeChunkUnloadEvent event = new FakeChunkUnloadEvent(
                         player,

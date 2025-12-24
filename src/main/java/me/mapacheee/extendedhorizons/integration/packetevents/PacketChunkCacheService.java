@@ -14,6 +14,7 @@ import com.google.inject.Inject;
 import org.bukkit.Bukkit;
 import java.util.concurrent.TimeUnit;
 import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 
 import java.util.*;
 
@@ -30,7 +31,7 @@ public class PacketChunkCacheService {
 
     private final int maxEntries = DEFAULT_MAX_ENTRIES;
     private final long ttlMillis = DEFAULT_TTL_MILLIS;
-    private io.papermc.paper.threadedregions.scheduler.ScheduledTask cleanupTask;
+    private ScheduledTask cleanupTask;
 
     private static final class Entry {
         final Column column;

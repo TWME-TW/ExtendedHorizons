@@ -13,7 +13,12 @@ import org.bukkit.entity.Player;
 import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
 
 import java.util.*;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import me.mapacheee.extendedhorizons.shared.storage.PlayerData;
+import me.mapacheee.extendedhorizons.shared.config.MainConfig.WorldConfig;
+import me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin;
+import me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent;
 
 /*
  *   Manages extended view distance with dual system:
@@ -70,7 +75,7 @@ public class ViewDistanceService {
             int clientDistance = player.getClientViewDistance();
             int initialDistance = (clientDistance > 0) ? clientDistance
                     : playerData
-                            .map(me.mapacheee.extendedhorizons.shared.storage.PlayerData::getViewDistance)
+                            .map(PlayerData::getViewDistance)
                             .orElse(fallbackDefault);
 
             int clamped = clampDistance(player, initialDistance);
@@ -80,7 +85,7 @@ public class ViewDistanceService {
             packetService.ensureClientRadius(player, clamped);
             packetService.ensureClientSimulationDistance(player, clamped);
 
-            player.getScheduler().runDelayed(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+            player.getScheduler().runDelayed(ExtendedHorizonsPlugin.getInstance(),
                     (task) -> {
                         if (!player.isOnline())
                             return;
@@ -91,14 +96,14 @@ public class ViewDistanceService {
 
             var msgCfg = configService.get().messages();
             if (msgCfg != null && msgCfg.welcomeMessage() != null && msgCfg.welcomeMessage().enabled()) {
-                player.getScheduler().runDelayed(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                player.getScheduler().runDelayed(ExtendedHorizonsPlugin.getInstance(),
                         (task) -> {
                             if (player.isOnline())
                                 messageService.sendWelcome(player, clamped);
                         }, null, 15L);
             }
 
-            player.getScheduler().runDelayed(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+            player.getScheduler().runDelayed(ExtendedHorizonsPlugin.getInstance(),
                     (task) -> {
                         if (!player.isOnline())
                             return;
@@ -116,12 +121,12 @@ public class ViewDistanceService {
     public void handlePlayerQuit(Player player) {
         PlayerView playerView = playerViews.remove(player.getUniqueId());
         if (playerView != null) {
-            storageService.savePlayerData(new me.mapacheee.extendedhorizons.shared.storage.PlayerData(
+            storageService.savePlayerData(new PlayerData(
                     player.getUniqueId(), playerView.getTargetDistance()));
         }
 
         fakeChunkService.clearPlayerFakeChunks(player, true,
-                me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent.UnloadReason.PLAYER_QUIT);
+                FakeChunkUnloadEvent.UnloadReason.PLAYER_QUIT);
         packetService.cleanupPlayer(player);
         movementListener.cleanupPlayer(player.getUniqueId());
     }
@@ -149,7 +154,7 @@ public class ViewDistanceService {
         view.setTargetDistance(clamped);
 
         storageService.savePlayerData(
-                new me.mapacheee.extendedhorizons.shared.storage.PlayerData(player.getUniqueId(), clamped));
+                new PlayerData(player.getUniqueId(), clamped));
 
         packetService.ensureClientRadius(player, clamped);
         packetService.ensureClientSimulationDistance(player, clamped);
@@ -163,7 +168,7 @@ public class ViewDistanceService {
     public int getAllowedMax(Player player) {
         String worldName = player.getWorld().getName();
 
-        java.util.Map<String, me.mapacheee.extendedhorizons.shared.config.MainConfig.WorldConfig> worldSettings = configService
+        Map<String, WorldConfig> worldSettings = configService
                 .get().worldSettings();
 
         int configMax;
@@ -219,7 +224,7 @@ public class ViewDistanceService {
 
         packetService.ensureClientRadius(player, playerView.getTargetDistance());
         packetService.ensureClientSimulationDistance(player, playerView.getTargetDistance());
-        player.getScheduler().runDelayed(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+        player.getScheduler().runDelayed(ExtendedHorizonsPlugin.getInstance(),
                 (task) -> {
                     if (player.isOnline()) {
                         packetService.ensureClientSimulationDistance(player, playerView.getTargetDistance());
@@ -229,7 +234,7 @@ public class ViewDistanceService {
         int serverViewDistance = fakeChunkService.getServerViewDistance();
         if (playerView.getTargetDistance() <= serverViewDistance) {
             fakeChunkService.clearPlayerFakeChunks(player, true,
-                    me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent.UnloadReason.DISTANCE);
+                    FakeChunkUnloadEvent.UnloadReason.DISTANCE);
             return;
         }
 
@@ -239,7 +244,7 @@ public class ViewDistanceService {
         double borderSize = border.getSize();
         int targetDistance = playerView.getTargetDistance();
 
-        org.bukkit.Bukkit.getAsyncScheduler().runNow(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+        org.bukkit.Bukkit.getAsyncScheduler().runNow(ExtendedHorizonsPlugin.getInstance(),
                 (task) -> {
                     if (!player.isOnline())
                         return;
@@ -287,7 +292,7 @@ public class ViewDistanceService {
         double borderCenterZ = border.getCenter().getZ();
         double borderSize = border.getSize();
 
-        org.bukkit.Bukkit.getAsyncScheduler().runNow(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+        org.bukkit.Bukkit.getAsyncScheduler().runNow(ExtendedHorizonsPlugin.getInstance(),
                 (task) -> {
                     if (!player.isOnline())
                         return;

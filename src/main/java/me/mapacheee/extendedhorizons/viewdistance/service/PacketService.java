@@ -17,7 +17,10 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.chunk.LevelChunk;
 
 import java.util.Set;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 /*
  *   Manages client chunk radius and sends chunks manually using NMS
@@ -29,8 +32,8 @@ public class PacketService {
     private static final Logger logger = LoggerFactory.getLogger(PacketService.class);
     private final Plugin plugin = JavaPlugin.getPlugin(ExtendedHorizonsPlugin.class);
 
-    private final java.util.Map<java.util.UUID, Integer> lastSentChunkRadius = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.Map<java.util.UUID, Integer> lastSentSimulationDistance = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<UUID, Integer> lastSentChunkRadius = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> lastSentSimulationDistance = new ConcurrentHashMap<>();
 
     private static final boolean DEBUG = false;
 
@@ -45,7 +48,7 @@ public class PacketService {
         if (radius < 2)
             return;
 
-        java.util.UUID uuid = player.getUniqueId();
+        UUID uuid = player.getUniqueId();
         Integer lastRadius = lastSentChunkRadius.get(uuid);
 
         if (lastRadius != null && lastRadius == radius) {
@@ -80,7 +83,7 @@ public class PacketService {
         if (distance < 2)
             return;
 
-        java.util.UUID uuid = player.getUniqueId();
+        UUID uuid = player.getUniqueId();
         Integer lastDistance = lastSentSimulationDistance.get(uuid);
 
         if (lastDistance != null && lastDistance == distance) {
@@ -246,7 +249,7 @@ public class PacketService {
      * Cleans up all player data on quit
      */
     public void cleanupPlayer(Player player) {
-        java.util.UUID uuid = player.getUniqueId();
+        UUID uuid = player.getUniqueId();
         lastSentChunkRadius.remove(uuid);
         lastSentSimulationDistance.remove(uuid);
     }
@@ -255,7 +258,7 @@ public class PacketService {
      * Resets cache for a player
      */
     public void resetPlayer(Player player) {
-        java.util.UUID uuid = player.getUniqueId();
+        UUID uuid = player.getUniqueId();
         lastSentChunkRadius.remove(uuid);
         lastSentSimulationDistance.remove(uuid);
     }
