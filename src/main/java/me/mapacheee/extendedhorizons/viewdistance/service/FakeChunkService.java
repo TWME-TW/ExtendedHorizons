@@ -5,6 +5,7 @@ import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerChunkData;
 import com.google.inject.Inject;
 import com.thewinterframework.service.annotation.Service;
+import com.thewinterframework.service.annotation.lifecycle.OnDisable;
 import me.mapacheee.extendedhorizons.integration.packetevents.PacketChunkCacheService;
 import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import org.slf4j.Logger;
@@ -28,6 +29,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import me.mapacheee.extendedhorizons.api.event.FakeChunkLoadEvent;
+import me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent;
 import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
 
 /*
@@ -108,6 +111,10 @@ public class FakeChunkService {
      */
     private final Map<UUID, Double> playerAvgPacketSize = new ConcurrentHashMap<>();
 
+    // Scheduled task references for proper cleanup
+    private io.papermc.paper.threadedregions.scheduler.ScheduledTask progressiveLoadingTask;
+    private io.papermc.paper.threadedregions.scheduler.ScheduledTask packetSenderTask;
+
     private static final boolean DEBUG = false;
     private static final int TELEPORT_DETECTION_THRESHOLD = 3;
     private static final int QUEUE_CLEAR_DISTANCE_THRESHOLD = 8;
@@ -149,13 +156,20 @@ public class FakeChunkService {
 
     /**
      * Cleans up player data when they quit or change worlds
+     * 
+     * @param sendPackets If true, sends unload packets to client
+     * @param reason      The reason for cleanup
      */
+    public void cleanupPlayer(Player player, boolean sendPackets, FakeChunkUnloadEvent.UnloadReason reason) {
+        clearPlayerFakeChunks(player, sendPackets, reason);
+    }
+
     public void cleanupPlayer(Player player, boolean sendPackets) {
-        clearPlayerFakeChunks(player, sendPackets);
+        cleanupPlayer(player, sendPackets, FakeChunkUnloadEvent.UnloadReason.DISTANCE);
     }
 
     public void cleanupPlayer(Player player) {
-        cleanupPlayer(player, true);
+        cleanupPlayer(player, true, FakeChunkUnloadEvent.UnloadReason.DISTANCE);
     }
 
     /**
@@ -167,92 +181,109 @@ public class FakeChunkService {
         startPacketSenderTask();
     }
 
+    @OnDisable
+    public void onDisable() {
+        if (progressiveLoadingTask != null) {
+            progressiveLoadingTask.cancel();
+        }
+        if (packetSenderTask != null) {
+            packetSenderTask.cancel();
+        }
+
+        shutdown();
+    }
+
     /**
      * Periodic task to load fake chunks for players with a limit
      */
     private void startProgressiveLoadingTask() {
-        Bukkit.getAsyncScheduler()
+        this.progressiveLoadingTask = Bukkit.getAsyncScheduler()
                 .runAtFixedRate(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(), (task) -> {
-                    chunksGeneratedThisTick.set(0);
-                    playerBytesThisTick.clear();
-
-                    maxGenerationsPerTick = configService.get().performance().maxGenerationsPerTick();
-                    if (maxGenerationsPerTick <= 0)
-                        maxGenerationsPerTick = 1;
-
-                    long bandwidthPerPlayer = configService.get().bandwidthSaver().maxBandwidthPerPlayer(); // KB/s
-                    if (bandwidthPerPlayer <= 0)
-                        bandwidthPerPlayer = 10000;
-
-                    maxBytesPerTick = (bandwidthPerPlayer * 1024) / 20;
-
                     try {
-                        double mspt = Bukkit.getAverageTickTime();
-                        double maxMspt = configService.get().performance().maxMsptForLoading();
-                        if (maxMspt > 0 && mspt > maxMspt) {
+                        chunksGeneratedThisTick.set(0);
+                        playerBytesThisTick.clear();
+
+                        maxGenerationsPerTick = configService.get().performance().maxGenerationsPerTick();
+                        if (maxGenerationsPerTick <= 0)
+                            maxGenerationsPerTick = 1;
+
+                        long bandwidthPerPlayer = configService.get().bandwidthSaver().maxBandwidthPerPlayer(); // KB/s
+                        if (bandwidthPerPlayer <= 0)
+                            bandwidthPerPlayer = 10000;
+
+                        maxBytesPerTick = (bandwidthPerPlayer * 1024) / 20;
+
+                        try {
+                            double mspt = Bukkit.getAverageTickTime();
+                            double maxMspt = configService.get().performance().maxMsptForLoading();
+                            if (maxMspt > 0 && mspt > maxMspt) {
+                                if (DEBUG) {
+                                    logger.warn("[EH] High MSPT ({}ms > {}ms), skipping chunk loading",
+                                            String.format("%.2f", mspt), maxMspt);
+                                }
+                                return;
+                            }
+                        } catch (UnsupportedOperationException | NullPointerException ignored) {
+                        }
+
+                        int activeTasks = ((java.util.concurrent.ThreadPoolExecutor) chunkProcessor).getActiveCount();
+                        int queueSize = ((java.util.concurrent.ThreadPoolExecutor) chunkProcessor).getQueue().size();
+                        int maxTasks = configService.get().performance().maxAsyncLoadTasks();
+                        int maxQueue = configService.get().performance().maxAsyncLoadQueue();
+
+                        if (maxTasks <= 0)
+                            maxTasks = 4;
+                        if (maxQueue <= 0)
+                            maxQueue = 10;
+
+                        if (activeTasks > maxTasks || queueSize > maxQueue) {
                             if (DEBUG) {
-                                logger.warn("[EH] High MSPT ({}ms > {}ms), skipping chunk loading",
-                                        String.format("%.2f", mspt), maxMspt);
+                                logger.warn("[EH] High async load ({} active, {} queued), skipping batch", activeTasks,
+                                        queueSize);
                             }
                             return;
                         }
-                    } catch (UnsupportedOperationException ignored) {
-                    }
 
-                    int activeTasks = ((java.util.concurrent.ThreadPoolExecutor) chunkProcessor).getActiveCount();
-                    int queueSize = ((java.util.concurrent.ThreadPoolExecutor) chunkProcessor).getQueue().size();
-                    int maxTasks = configService.get().performance().maxAsyncLoadTasks();
-                    int maxQueue = configService.get().performance().maxAsyncLoadQueue();
+                        playerChunksProcessedThisTick.clear();
 
-                    if (maxTasks <= 0)
-                        maxTasks = 4;
-                    if (maxQueue <= 0)
-                        maxQueue = 10;
+                        List<Map.Entry<UUID, Queue<Long>>> entries = new ArrayList<>(playerChunkQueues.entrySet());
 
-                    if (activeTasks > maxTasks || queueSize > maxQueue) {
-                        if (DEBUG) {
-                            logger.warn("[EH] High async load ({} active, {} queued), skipping batch", activeTasks,
-                                    queueSize);
+                        for (Map.Entry<UUID, Queue<Long>> entry : entries) {
+                            UUID playerId = entry.getKey();
+                            Queue<Long> queue = entry.getValue();
+
+                            if (queue == null || queue.isEmpty()) {
+                                continue;
+                            }
+
+                            Player player = Bukkit.getPlayer(playerId);
+                            if (player == null || !player.isOnline()) {
+                                playerChunkQueues.remove(playerId);
+                                continue;
+                            }
+
+                            Long startTime = warmupStartTimes.get(playerId);
+                            long warmupDelay = configService.get().performance().teleportWarmupDelay();
+                            if (startTime != null && System.currentTimeMillis() - startTime < warmupDelay) {
+                                continue;
+                            }
+
+                            processChunkQueue(player, queue);
                         }
-                        return;
-                    }
-
-                    playerChunksProcessedThisTick.clear();
-
-                    List<Map.Entry<UUID, Queue<Long>>> entries = new ArrayList<>(playerChunkQueues.entrySet());
-
-                    for (Map.Entry<UUID, Queue<Long>> entry : entries) {
-                        UUID playerId = entry.getKey();
-                        Queue<Long> queue = entry.getValue();
-
-                        if (queue == null || queue.isEmpty()) {
-                            continue;
-                        }
-
-                        Player player = Bukkit.getPlayer(playerId);
-                        if (player == null || !player.isOnline()) {
-                            playerChunkQueues.remove(playerId);
-                            continue;
-                        }
-
-                        Long startTime = warmupStartTimes.get(playerId);
-                        long warmupDelay = configService.get().performance().teleportWarmupDelay();
-                        if (startTime != null && System.currentTimeMillis() - startTime < warmupDelay) {
-                            continue;
-                        }
-
-                        processChunkQueue(player, queue);
+                    } catch (Throwable t) {
+                        logger.error("[EH] Error in progressive loading task", t);
                     }
 
                 }, 50L, Math.max(50L, configService.get().performance().chunkProcessInterval() * 50L),
                         TimeUnit.MILLISECONDS);
+
     }
 
     /**
      * Starts a task that flushes pending packets to players
      */
     private void startPacketSenderTask() {
-        Bukkit.getAsyncScheduler()
+        this.packetSenderTask = Bukkit.getAsyncScheduler()
                 .runAtFixedRate(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(), (task) -> {
                     if (pendingPackets.isEmpty())
                         return;
@@ -474,7 +505,8 @@ public class FakeChunkService {
                         if (DEBUG) {
                             logger.info("[EH] Loaded chunk {},{} from memory cache", chunkX, chunkZ);
                         }
-                        sendChunkPacket(player, memoryChunk, key, sentTracker);
+                        sendChunkPacket(player, memoryChunk, key, sentTracker,
+                                FakeChunkLoadEvent.LoadSource.MEMORY_CACHE);
                         return;
                     }
 
@@ -526,7 +558,7 @@ public class FakeChunkService {
                     logger.info("[EH] Chunk {},{} loaded from disk", chunkX, chunkZ);
                 }
                 sendChunkPacket(player, (LevelChunk) ((CraftChunk) chunk).getHandle(ChunkStatus.FULL), key,
-                        sentTracker);
+                        sentTracker, FakeChunkLoadEvent.LoadSource.DISK);
             }
         }, chunkProcessor).exceptionally(throwable -> {
             if (chunksGeneratedThisTick.get() >= maxGenerationsPerTick) {
@@ -852,7 +884,8 @@ public class FakeChunkService {
                     }
                     long chunkKey = ChunkUtils.packChunkKey(chunkX, chunkZ);
                     cacheChunkInMemory(chunkKey, nmsChunk);
-                    sendChunkPacket(player, nmsChunk, key, sentTracker);
+                    sendChunkPacket(player, nmsChunk, key, sentTracker,
+                            FakeChunkLoadEvent.LoadSource.GENERATED);
                 } else {
                     generatingChunks.remove(key);
                     if (DEBUG) {
@@ -881,7 +914,47 @@ public class FakeChunkService {
      * Enqueues a chunk packet to be sent to the player
      * Packets are created here in async thread and queued for sending
      */
-    private void sendChunkPacket(Player player, LevelChunk nmsChunk, long key, Set<Long> sentTracker) {
+    private void sendChunkPacket(Player player, LevelChunk nmsChunk, long key, Set<Long> sentTracker,
+            FakeChunkLoadEvent.LoadSource loadSource) {
+        int chunkX = ChunkUtils.unpackX(key);
+        int chunkZ = ChunkUtils.unpackZ(key);
+
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        try {
+            Bukkit.getScheduler().runTask(
+                    me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                    () -> {
+                        try {
+                            FakeChunkLoadEvent event = new FakeChunkLoadEvent(
+                                    player,
+                                    chunkX,
+                                    chunkZ,
+                                    player.getWorld(),
+                                    loadSource);
+
+                            logger.info("[EH-API] Firing FakeChunkLoadEvent for chunk {},{} to {} from {}",
+                                    chunkX, chunkZ, player.getName(), loadSource);
+                            Bukkit.getPluginManager().callEvent(event);
+
+                            if (event.isCancelled()) {
+                                logger.info("[EH-API] FakeChunkLoadEvent CANCELLED for chunk {},{} from {} to {}",
+                                        chunkX, chunkZ, loadSource, player.getName());
+                                cancelled.set(true);
+                            }
+                        } catch (Throwable t) {
+                            logger.error("[EH] Error firing FakeChunkLoadEvent", t);
+                        }
+                    });
+
+            Thread.sleep(10);
+
+            if (cancelled.get()) {
+                generatingChunks.remove(key);
+                return;
+            }
+        } catch (InterruptedException e) {
+        }
+
         if (configService.get().performance().fakeChunks().antiXray().enabled()) {
             try {
                 nmsChunk = cloneChunkForObfuscation(nmsChunk);
@@ -930,8 +1003,6 @@ public class FakeChunkService {
         generatingChunks.remove(key);
 
         if (DEBUG) {
-            int chunkX = ChunkUtils.unpackX(key);
-            int chunkZ = ChunkUtils.unpackZ(key);
             logger.info("[EH] Queued chunk packet {},{} for {}", chunkX, chunkZ, player.getName());
         }
     }
@@ -941,9 +1012,6 @@ public class FakeChunkService {
      * anti-xray is active)
      */
     private LevelChunk cloneChunkForObfuscation(LevelChunk original) {
-        // No cloning needed: memory cache is automatically disabled when anti-xray is
-        // enabled
-        // This prevents cached chunks from being permanently obfuscated
         return original;
     }
 
@@ -957,6 +1025,44 @@ public class FakeChunkService {
                 logger.warn("[EH] Attempted to send null column to " + player.getName());
             }
             return false;
+        }
+
+        int chunkX = column.getX();
+        int chunkZ = column.getZ();
+
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        try {
+            Bukkit.getScheduler().runTask(
+                    me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+                    () -> {
+                        try {
+                            FakeChunkLoadEvent event = new FakeChunkLoadEvent(
+                                    player,
+                                    chunkX,
+                                    chunkZ,
+                                    player.getWorld(),
+                                    FakeChunkLoadEvent.LoadSource.PACKET_CACHE);
+
+                            logger.info("[EH-API] Firing FakeChunkLoadEvent for chunk {},{} to {} from PACKET_CACHE",
+                                    chunkX, chunkZ, player.getName());
+                            Bukkit.getPluginManager().callEvent(event);
+
+                            if (event.isCancelled()) {
+                                logger.info("[EH-API] FakeChunkLoadEvent CANCELLED for chunk {},{} to {}",
+                                        chunkX, chunkZ, player.getName());
+                                cancelled.set(true);
+                            }
+                        } catch (Throwable t) {
+                            logger.error("[EH] Error firing FakeChunkLoadEvent", t);
+                        }
+                    });
+
+            Thread.sleep(10);
+
+            if (cancelled.get()) {
+                return false;
+            }
+        } catch (InterruptedException e) {
         }
 
         try {
@@ -977,8 +1083,10 @@ public class FakeChunkService {
      * @param player      The player to clear chunks for
      * @param sendPackets If true, sends unload packets to client. False if player
      *                    quit or changed worlds
+     * @param reason      The reason for unloading the chunks
      */
-    public void clearPlayerFakeChunks(Player player, boolean sendPackets) {
+    public void clearPlayerFakeChunks(Player player, boolean sendPackets,
+            FakeChunkUnloadEvent.UnloadReason reason) {
         UUID playerId = player.getUniqueId();
         Set<Long> fakeChunks = playerFakeChunks.remove(playerId);
 
@@ -986,6 +1094,15 @@ public class FakeChunkService {
             for (Long key : fakeChunks) {
                 int chunkX = me.mapacheee.extendedhorizons.shared.utils.ChunkUtils.unpackX(key);
                 int chunkZ = me.mapacheee.extendedhorizons.shared.utils.ChunkUtils.unpackZ(key);
+
+                FakeChunkUnloadEvent event = new FakeChunkUnloadEvent(
+                        player,
+                        chunkX,
+                        chunkZ,
+                        player.getWorld(),
+                        reason);
+                Bukkit.getPluginManager().callEvent(event);
+
                 sendUnloadPacket(player, chunkX, chunkZ);
             }
         }
@@ -1003,8 +1120,12 @@ public class FakeChunkService {
         playerBytesThisTick.remove(playerId);
     }
 
+    public void clearPlayerFakeChunks(Player player, boolean sendPackets) {
+        clearPlayerFakeChunks(player, sendPackets, FakeChunkUnloadEvent.UnloadReason.MANUAL);
+    }
+
     public void clearPlayerFakeChunks(Player player) {
-        clearPlayerFakeChunks(player, true);
+        clearPlayerFakeChunks(player, true, FakeChunkUnloadEvent.UnloadReason.MANUAL);
     }
 
     /**
@@ -1093,5 +1214,41 @@ public class FakeChunkService {
             return configService.get().performance().fakeChunks().enabled();
         }
         return worldSettings.get(worldName).enabled();
+    }
+
+    // ========== Public API Methods ==========
+
+    /**
+     * Gets the set of fake chunk keys for a player (for API access).
+     *
+     * @param playerId The player UUID
+     * @return Immutable set of chunk keys, or empty set if none
+     */
+    public Set<Long> getFakeChunksForPlayer(UUID playerId) {
+        Set<Long> chunks = playerFakeChunks.get(playerId);
+        return chunks != null ? Set.copyOf(chunks) : Set.of();
+    }
+
+    /**
+     * Checks if a specific chunk is a fake chunk for a player (for API access).
+     *
+     * @param playerId The player UUID
+     * @param chunkKey The chunk key
+     * @return true if the chunk is a fake chunk for this player
+     */
+    public boolean isFakeChunk(UUID playerId, long chunkKey) {
+        Set<Long> chunks = playerFakeChunks.get(playerId);
+        return chunks != null && chunks.contains(chunkKey);
+    }
+
+    /**
+     * Gets the count of fake chunks for a player (for API access).
+     *
+     * @param playerId The player UUID
+     * @return Number of fake chunks
+     */
+    public int getFakeChunkCount(UUID playerId) {
+        Set<Long> chunks = playerFakeChunks.get(playerId);
+        return chunks != null ? chunks.size() : 0;
     }
 }

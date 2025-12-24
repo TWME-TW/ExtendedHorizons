@@ -120,7 +120,8 @@ public class ViewDistanceService {
                     player.getUniqueId(), playerView.getTargetDistance()));
         }
 
-        fakeChunkService.clearPlayerFakeChunks(player);
+        fakeChunkService.clearPlayerFakeChunks(player, true,
+                me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent.UnloadReason.PLAYER_QUIT);
         packetService.cleanupPlayer(player);
         movementListener.cleanupPlayer(player.getUniqueId());
     }
@@ -227,7 +228,8 @@ public class ViewDistanceService {
 
         int serverViewDistance = fakeChunkService.getServerViewDistance();
         if (playerView.getTargetDistance() <= serverViewDistance) {
-            fakeChunkService.clearPlayerFakeChunks(player);
+            fakeChunkService.clearPlayerFakeChunks(player, true,
+                    me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent.UnloadReason.DISTANCE);
             return;
         }
 

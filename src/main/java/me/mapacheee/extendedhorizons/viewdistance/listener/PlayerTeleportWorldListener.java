@@ -54,7 +54,8 @@ public class PlayerTeleportWorldListener implements Listener {
 
     @EventHandler
     public void onWorldChange(PlayerChangedWorldEvent event) {
-        fakeChunkService.cleanupPlayer(event.getPlayer(), false);
+        fakeChunkService.cleanupPlayer(event.getPlayer(), false,
+                me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent.UnloadReason.WORLD_CHANGE);
 
         me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getService(
                 me.mapacheee.extendedhorizons.viewdistance.service.PacketService.class)

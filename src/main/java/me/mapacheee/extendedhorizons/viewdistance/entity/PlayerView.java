@@ -3,11 +3,7 @@ package me.mapacheee.extendedhorizons.viewdistance.entity;
 import org.bukkit.Chunk;
 import org.bukkit.entity.Player;
 
-import java.util.Collections;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-
 
 /*
  * Represents the view-related state of a connected player.
@@ -18,8 +14,6 @@ public class PlayerView {
 
     private final UUID uuid;
     private int targetDistance;
-    private final Set<Long> sentChunks = Collections.newSetFromMap(new ConcurrentHashMap<>());
-
 
     public PlayerView(Player player, int initialDistance) {
         this.uuid = player.getUniqueId();
@@ -36,10 +30,6 @@ public class PlayerView {
 
     public void setTargetDistance(int targetDistance) {
         this.targetDistance = targetDistance;
-    }
-
-    public Set<Long> getSentChunks() {
-        return sentChunks;
     }
 
     public static long getChunkKey(Chunk chunk) {

@@ -9,6 +9,7 @@ import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerChunkData;
 import com.thewinterframework.service.annotation.Service;
 import com.thewinterframework.service.annotation.lifecycle.OnEnable;
+import com.thewinterframework.service.annotation.lifecycle.OnDisable;
 import com.google.inject.Inject;
 import org.bukkit.Bukkit;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +30,7 @@ public class PacketChunkCacheService {
 
     private final int maxEntries = DEFAULT_MAX_ENTRIES;
     private final long ttlMillis = DEFAULT_TTL_MILLIS;
+    private io.papermc.paper.threadedregions.scheduler.ScheduledTask cleanupTask;
 
     private static final class Entry {
         final Column column;
@@ -73,13 +75,22 @@ public class PacketChunkCacheService {
                     }
                 });
 
-        Bukkit.getAsyncScheduler().runAtFixedRate(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
+        this.cleanupTask = Bukkit.getAsyncScheduler().runAtFixedRate(
+                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
                 (task) -> {
                     long now = System.currentTimeMillis();
                     synchronized (cache) {
                         cache.entrySet().removeIf(e -> now - e.getValue().lastAccess > ttlMillis);
                     }
                 }, 15L, 15L, TimeUnit.SECONDS);
+    }
+
+    @OnDisable
+    public void onDisable() {
+        if (cleanupTask != null) {
+            cleanupTask.cancel();
+        }
+        clear();
     }
 
     public Column get(int x, int z) {
