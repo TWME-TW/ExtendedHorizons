@@ -1,19 +1,15 @@
 package me.mapacheee.extendedhorizons.integration.packetevents;
 
-import com.github.retrooper.packetevents.PacketEvents;
-import com.github.retrooper.packetevents.event.PacketListenerAbstract;
-import com.github.retrooper.packetevents.event.PacketListenerPriority;
-import com.github.retrooper.packetevents.event.PacketSendEvent;
-import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.world.chunk.Column;
-import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerChunkData;
 import com.thewinterframework.service.annotation.Service;
 import com.thewinterframework.service.annotation.lifecycle.OnEnable;
 import com.thewinterframework.service.annotation.lifecycle.OnDisable;
+
 import com.google.inject.Inject;
 import org.bukkit.Bukkit;
 import java.util.concurrent.TimeUnit;
 import me.mapacheee.extendedhorizons.shared.utils.ChunkUtils;
+import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 
 import java.util.*;
@@ -26,12 +22,15 @@ import java.util.*;
 @Service
 public class PacketChunkCacheService {
 
-    private static final int DEFAULT_MAX_ENTRIES = 512;
-    private static final long DEFAULT_TTL_MILLIS = 300_000L;
-
-    private final int maxEntries = DEFAULT_MAX_ENTRIES;
-    private final long ttlMillis = DEFAULT_TTL_MILLIS;
+    private final Map<Long, Entry> cache;
+    private final ConfigService configService;
     private ScheduledTask cleanupTask;
+    private final long ttlMillis;
+
+    // Metrics
+    private final java.util.concurrent.atomic.AtomicLong hits = new java.util.concurrent.atomic.AtomicLong(0);
+    private final java.util.concurrent.atomic.AtomicLong misses = new java.util.concurrent.atomic.AtomicLong(0);
+    private final java.util.concurrent.atomic.AtomicLong evictions = new java.util.concurrent.atomic.AtomicLong(0);
 
     private static final class Entry {
         final Column column;
@@ -43,47 +42,52 @@ public class PacketChunkCacheService {
         }
     }
 
-    private final Map<Long, Entry> cache = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<Long, Entry> eldest) {
-            return size() > maxEntries;
-        }
-    });
-
     @Inject
-    public PacketChunkCacheService() {
+    public PacketChunkCacheService(ConfigService configService) {
+        this.configService = configService;
+
+        int maxEntries = configService.get().performance().fakeChunks().maxCachedPackets();
+        if (maxEntries <= 0)
+            maxEntries = 512;
+
+        int ttlSeconds = configService.get().performance().fakeChunks().packetCacheTtlSeconds();
+        if (ttlSeconds <= 0)
+            ttlSeconds = 300;
+        this.ttlMillis = ttlSeconds * 1000L;
+
+        final int finalMaxEntries = maxEntries;
+        this.cache = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<Long, Entry> eldest) {
+                boolean remove = size() > finalMaxEntries;
+                if (remove) {
+                    evictions.incrementAndGet();
+                }
+                return remove;
+            }
+        });
     }
 
     @OnEnable
     public void register() {
-        PacketEvents.getAPI().getEventManager()
-                .registerListener(new PacketListenerAbstract(PacketListenerPriority.MONITOR) {
-                    @Override
-                    public void onPacketSend(PacketSendEvent event) {
-                        if (event.getPacketType() != PacketType.Play.Server.CHUNK_DATA)
-                            return;
-
-                        try {
-                            WrapperPlayServerChunkData wrapper = new WrapperPlayServerChunkData(event);
-                            Column column = wrapper.getColumn();
-                            if (column == null)
-                                return;
-
-                            long key = ChunkUtils.packChunkKey(column.getX(), column.getZ());
-                            cache.put(key, new Entry(column));
-                        } catch (Throwable e) {
-                        }
-                    }
-                });
+        int intervalSeconds = configService.get().performance().fakeChunks().cacheCleanupInterval();
+        if (intervalSeconds <= 0)
+            intervalSeconds = 30;
 
         this.cleanupTask = Bukkit.getAsyncScheduler().runAtFixedRate(
                 me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(),
                 (task) -> {
                     long now = System.currentTimeMillis();
                     synchronized (cache) {
-                        cache.entrySet().removeIf(e -> now - e.getValue().lastAccess > ttlMillis);
+                        cache.entrySet().removeIf(e -> {
+                            boolean expired = now - e.getValue().lastAccess > ttlMillis;
+                            if (expired) {
+                                evictions.incrementAndGet();
+                            }
+                            return expired;
+                        });
                     }
-                }, 15L, 15L, TimeUnit.SECONDS);
+                }, intervalSeconds, intervalSeconds, TimeUnit.SECONDS);
     }
 
     @OnDisable
@@ -97,14 +101,21 @@ public class PacketChunkCacheService {
     public Column get(int x, int z) {
         long key = ChunkUtils.packChunkKey(x, z);
         Entry e = cache.get(key);
-        if (e == null)
+        if (e == null) {
+            misses.incrementAndGet();
             return null;
+        }
+
         long now = System.currentTimeMillis();
         if (now - e.lastAccess > ttlMillis) {
             cache.remove(key);
+            misses.incrementAndGet();
+            evictions.incrementAndGet();
             return null;
         }
+
         e.lastAccess = now;
+        hits.incrementAndGet();
         return e.column;
     }
 
@@ -121,6 +132,15 @@ public class PacketChunkCacheService {
         synchronized (cache) {
             cache.clear();
         }
+    }
+
+    public Map<String, Long> getStats() {
+        Map<String, Long> stats = new LinkedHashMap<>();
+        stats.put("hits", hits.get());
+        stats.put("misses", misses.get());
+        stats.put("evictions", evictions.get());
+        stats.put("size", (long) cache.size());
+        return stats;
     }
 
 }

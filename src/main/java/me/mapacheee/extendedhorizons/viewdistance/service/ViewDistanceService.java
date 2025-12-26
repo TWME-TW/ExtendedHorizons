@@ -199,6 +199,9 @@ public class ViewDistanceService {
         if (!player.isOnline())
             return;
         if (!isPluginEnabledForWorld(player.getWorld())) {
+            int serverDist = org.bukkit.Bukkit.getViewDistance();
+            packetService.ensureClientRadius(player, serverDist);
+            packetService.ensureClientSimulationDistance(player, serverDist);
             fakeChunkService.clearPlayerFakeChunks(player);
             return;
         }
@@ -374,7 +377,7 @@ public class ViewDistanceService {
             return worldSettings.get(worldName).enabled();
         }
 
-        return true;
+        return configService.get().performance().fakeChunks().enabled();
     }
 
     public PlayerView getPlayerView(UUID uuid) {

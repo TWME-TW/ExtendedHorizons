@@ -5,16 +5,14 @@ import com.thewinterframework.service.annotation.Service;
 import me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
-import org.bukkit.craftbukkit.CraftChunk;
-import org.bukkit.craftbukkit.entity.CraftPlayer;
+
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import net.minecraft.network.protocol.game.*;
-import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.chunk.LevelChunk;
+import me.mapacheee.extendedhorizons.viewdistance.service.nms.NMSChunkAccess;
+import me.mapacheee.extendedhorizons.viewdistance.service.nms.NMSPacketAccess;
 
 import java.util.Set;
 import java.util.Map;
@@ -37,8 +35,13 @@ public class PacketService {
 
     private static final boolean DEBUG = false;
 
+    private final NMSPacketAccess nmsPacketAccess;
+    private final NMSChunkAccess nmsChunkAccess;
+
     @Inject
-    public PacketService() {
+    public PacketService(NMSPacketAccess nmsPacketAccess, NMSChunkAccess nmsChunkAccess) {
+        this.nmsPacketAccess = nmsPacketAccess;
+        this.nmsChunkAccess = nmsChunkAccess;
     }
 
     /**
@@ -56,24 +59,21 @@ public class PacketService {
         }
 
         lastSentChunkRadius.put(uuid, radius);
-        ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
-        if (nmsPlayer.connection == null) {
-            return;
-        }
-        nmsPlayer.connection.send(new ClientboundSetChunkCacheRadiusPacket(radius));
+        lastSentChunkRadius.put(uuid, radius);
+
+        Object packet = nmsPacketAccess.createChunkCacheRadiusPacket(radius);
+        nmsPacketAccess.sendPacket(player, packet);
     }
 
     /**
      * Updates client chunk cache center to player's current position
      */
     public void ensureClientCenter(Player player) {
-        ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
-        if (nmsPlayer.connection == null) {
-            return;
-        }
         int cx = player.getLocation().getBlockX() >> 4;
         int cz = player.getLocation().getBlockZ() >> 4;
-        nmsPlayer.connection.send(new ClientboundSetChunkCacheCenterPacket(cx, cz));
+
+        Object packet = nmsPacketAccess.createChunkCacheCenterPacket(cx, cz);
+        nmsPacketAccess.sendPacket(player, packet);
     }
 
     /**
@@ -91,11 +91,10 @@ public class PacketService {
         }
 
         lastSentSimulationDistance.put(uuid, distance);
-        ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
-        if (nmsPlayer.connection == null) {
-            return;
-        }
-        nmsPlayer.connection.send(new ClientboundSetSimulationDistancePacket(distance));
+        lastSentSimulationDistance.put(uuid, distance);
+
+        Object packet = nmsPacketAccess.createSimulationDistancePacket(distance);
+        nmsPacketAccess.sendPacket(player, packet);
     }
 
     /**
@@ -111,25 +110,14 @@ public class PacketService {
 
         Bukkit.getScheduler().runTask(plugin, () -> {
             try {
-                ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
-                net.minecraft.world.level.chunk.ChunkAccess chunkAccess = ((CraftChunk) chunk)
-                        .getHandle(net.minecraft.world.level.chunk.status.ChunkStatus.FULL);
-
-                if (!(chunkAccess instanceof LevelChunk)) {
+                Object nmsChunk = nmsChunkAccess.getNMSChunk(chunk);
+                if (nmsChunk == null) {
                     future.complete(null);
                     return;
                 }
 
-                LevelChunk nmsChunk = (LevelChunk) chunkAccess;
-
-                @SuppressWarnings("deprecation")
-                ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(
-                        nmsChunk,
-                        nmsChunk.getLevel().getLightEngine(),
-                        null,
-                        null);
-
-                nmsPlayer.connection.send(packet);
+                Object packet = nmsPacketAccess.createChunkPacket(nmsChunk);
+                nmsPacketAccess.sendPacket(player, packet);
 
                 if (DEBUG) {
                     logger.info("[EH] Sent chunk {},{} to {}", chunk.getX(), chunk.getZ(), player.getName());
@@ -165,25 +153,12 @@ public class PacketService {
                     break;
 
                 try {
-                    ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
-                    net.minecraft.world.level.chunk.ChunkAccess chunkAccess = ((CraftChunk) chunk)
-                            .getHandle(net.minecraft.world.level.chunk.status.ChunkStatus.FULL);
-
-                    if (!(chunkAccess instanceof LevelChunk))
+                    Object nmsChunk = nmsChunkAccess.getNMSChunk(chunk);
+                    if (nmsChunk == null)
                         continue;
 
-                    LevelChunk nmsChunk = (LevelChunk) chunkAccess;
-
-                    // Note: Constructor is deprecated but no alternative available in current Paper
-                    // version
-                    @SuppressWarnings("deprecation")
-                    ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(
-                            nmsChunk,
-                            nmsChunk.getLevel().getLightEngine(),
-                            null,
-                            null);
-
-                    nmsPlayer.connection.send(packet);
+                    Object packet = nmsPacketAccess.createChunkPacket(nmsChunk);
+                    nmsPacketAccess.sendPacket(player, packet);
                     sent++;
 
                 } catch (Exception e) {
@@ -213,28 +188,14 @@ public class PacketService {
         }
 
         try {
-            ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
-
             org.bukkit.World world = player.getWorld();
             Chunk chunk = world.getChunkAt(chunkX, chunkZ);
 
             if (chunk.isLoaded()) {
-                net.minecraft.world.level.chunk.ChunkAccess chunkAccess = ((CraftChunk) chunk)
-                        .getHandle(net.minecraft.world.level.chunk.status.ChunkStatus.FULL);
-
-                if (chunkAccess instanceof LevelChunk) {
-                    LevelChunk nmsChunk = (LevelChunk) chunkAccess;
-
-                    // Note: Constructor is deprecated but no alternative available in current Paper
-                    // version
-                    @SuppressWarnings("deprecation")
-                    ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(
-                            nmsChunk,
-                            nmsChunk.getLevel().getLightEngine(),
-                            null,
-                            null);
-
-                    nmsPlayer.connection.send(packet);
+                Object nmsChunk = nmsChunkAccess.getNMSChunk(chunk);
+                if (nmsChunk != null) {
+                    Object packet = nmsPacketAccess.createChunkPacket(nmsChunk);
+                    nmsPacketAccess.sendPacket(player, packet);
                 }
             }
 

@@ -5,8 +5,10 @@ import com.thewinterframework.command.CommandComponent;
 import com.thewinterframework.service.ReloadServiceManager;
 import me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin;
 import me.mapacheee.extendedhorizons.integration.packetevents.PacketChunkCacheService;
+
 import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import me.mapacheee.extendedhorizons.shared.service.MessageService;
+import me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService;
 import me.mapacheee.extendedhorizons.viewdistance.service.ViewDistanceService;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -29,7 +31,7 @@ public class ViewDistanceCommand {
     private final ConfigService configService;
     private final ReloadServiceManager reloadServiceManager;
     private final PacketChunkCacheService cacheService;
-    private final me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService fakeChunkService;
+    private final FakeChunkService fakeChunkService;
 
     @Inject
     public ViewDistanceCommand(
@@ -38,7 +40,7 @@ public class ViewDistanceCommand {
             ConfigService configService,
             ReloadServiceManager reloadServiceManager,
             PacketChunkCacheService cacheService,
-            me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService fakeChunkService) {
+            FakeChunkService fakeChunkService) {
         this.viewDistanceService = viewDistanceService;
         this.messageService = messageService;
         this.configService = configService;

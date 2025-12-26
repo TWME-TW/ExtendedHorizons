@@ -34,12 +34,15 @@ performance:
   # Number of threads for parallel chunk processing (0 = auto-detect based on CPU cores)
   # Recommended: 0 (auto) or 4-8 for most servers
   chunk-processor-threads: 0
+  # Interval in ticks between chunk validation/process cycles
+  # Higher values reduce CPU usage but make loading "stuttery"
+  chunk-process-interval: 1
   
   # Teleport warmup delay in milliseconds to load fake chunks
-  teleport-warmup-delay: 1600 # in milliseconds
+  teleport-warmup-delay: 10
 
   # MSPT Protection: Pause fake chunk loading if server is lagging
-  max-mspt-for-loading: 45.0
+  max-mspt-for-loading: 40.0
 
   # Async Task Throttling: Limit concurrent chunk loading tasks
   max-async-load-tasks: 4
@@ -60,10 +63,12 @@ performance:
     cache-cleanup-interval: 10
     # Enable chunk memory cache (reuses loaded chunks, saves CPU but uses RAM)
     # Recommended: true for <50 players, false for >100 players or low RAM servers
-    enable-memory-cache: false
+    enable-memory-cache: true
     # Maximum chunks to cache in memory (1000 = ~40-80MB depending on chunk complexity)
     # Increase for more players in same area, decrease for dispersed players or low RAM
     max-memory-cache-size: 1000
+    # Packet cache TTL in seconds
+    packet-cache-ttl-seconds: 30
     
     # Anti-X-Ray for fake chunks
 
@@ -91,7 +96,7 @@ bandwidth-saver:
   # Skips redundant entity movement/rotation packets (ESU-inspired)
   skip-redundant-packets: true
   # Limits the rate of fake chunk sending to prevent network saturation
-  max-fake-chunks-per-tick: 22
+  max-fake-chunks-per-tick: 3
   # Maximum bandwidth per player in KB/s (512 KB/s = ~4 Mbps)
   # Set to 0 to disable bandwidth limiting
   max-bandwidth-per-player: 10000

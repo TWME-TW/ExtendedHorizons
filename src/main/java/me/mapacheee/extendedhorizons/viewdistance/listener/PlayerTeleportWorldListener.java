@@ -7,6 +7,11 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService;
+import me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin;
+import me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent;
+import me.mapacheee.extendedhorizons.viewdistance.service.PacketService;
+import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 
 /*
  * Handles teleports and world changes to resync cache center/radius and prefetch
@@ -15,13 +20,16 @@ import org.bukkit.event.player.PlayerTeleportEvent;
 public class PlayerTeleportWorldListener implements Listener {
 
     private final ViewDistanceService viewDistanceService;
-    private final me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService fakeChunkService;
+    private final FakeChunkService fakeChunkService;
+    private final ConfigService configService;
 
     @Inject
     public PlayerTeleportWorldListener(ViewDistanceService viewDistanceService,
-            me.mapacheee.extendedhorizons.viewdistance.service.FakeChunkService fakeChunkService) {
+            FakeChunkService fakeChunkService,
+            ConfigService configService) {
         this.viewDistanceService = viewDistanceService;
         this.fakeChunkService = fakeChunkService;
+        this.configService = configService;
     }
 
     @EventHandler
@@ -30,13 +38,13 @@ public class PlayerTeleportWorldListener implements Listener {
         fakeChunkService.cleanupPlayer(event.getPlayer(), isSameWorld);
 
         event.getPlayer().getScheduler().run(
-                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
-                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
+                ExtendedHorizonsPlugin.getPlugin(
+                        ExtendedHorizonsPlugin.class),
                 (task) -> {
                     if (event.getPlayer().isOnline()) {
                         event.getPlayer().getScheduler().runDelayed(
-                                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
-                                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
+                                ExtendedHorizonsPlugin.getPlugin(
+                                        ExtendedHorizonsPlugin.class),
                                 (innerTask) -> {
                                     if (event.getPlayer().isOnline()) {
                                         viewDistanceService.updatePlayerView(event.getPlayer());
@@ -46,7 +54,7 @@ public class PlayerTeleportWorldListener implements Listener {
                                         }
                                     }
                                 },
-                                null, 40L);
+                                null, getDelayTicks());
                     }
                 },
                 null);
@@ -55,29 +63,36 @@ public class PlayerTeleportWorldListener implements Listener {
     @EventHandler
     public void onWorldChange(PlayerChangedWorldEvent event) {
         fakeChunkService.cleanupPlayer(event.getPlayer(), false,
-                me.mapacheee.extendedhorizons.api.event.FakeChunkUnloadEvent.UnloadReason.WORLD_CHANGE);
+                FakeChunkUnloadEvent.UnloadReason.WORLD_CHANGE);
 
-        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getService(
-                me.mapacheee.extendedhorizons.viewdistance.service.PacketService.class)
+        ExtendedHorizonsPlugin.getService(
+                PacketService.class)
                 .resetPlayer(event.getPlayer());
 
         event.getPlayer().getScheduler().run(
-                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
-                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
+                ExtendedHorizonsPlugin.getPlugin(
+                        ExtendedHorizonsPlugin.class),
                 (task) -> {
                     if (event.getPlayer().isOnline()) {
                         event.getPlayer().getScheduler().runDelayed(
-                                me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getPlugin(
-                                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class),
+                                ExtendedHorizonsPlugin.getPlugin(
+                                        ExtendedHorizonsPlugin.class),
                                 (innerTask) -> {
                                     if (event.getPlayer().isOnline()) {
                                         viewDistanceService.updatePlayerView(event.getPlayer());
                                         fakeChunkService.onPlayerJoin(event.getPlayer());
                                     }
                                 },
-                                null, 40L);
+                                null, getDelayTicks());
                     }
                 },
                 null);
+    }
+
+    private long getDelayTicks() {
+        long delayMs = configService.get().performance().teleportWarmupDelay();
+        if (delayMs <= 0)
+            return 5L;
+        return Math.max(5L, delayMs / 50);
     }
 }

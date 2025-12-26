@@ -9,13 +9,16 @@ import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerChunkData;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUnloadChunk;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateViewDistance;
+
 import com.thewinterframework.service.annotation.Service;
 import com.thewinterframework.service.annotation.lifecycle.OnEnable;
 import com.google.inject.Inject;
+import com.google.inject.Provider;
+import me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin;
 import me.mapacheee.extendedhorizons.viewdistance.service.ViewDistanceService;
 import org.bukkit.entity.Player;
-import org.bukkit.craftbukkit.entity.CraftPlayer;
-import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
+
+import me.mapacheee.extendedhorizons.viewdistance.service.nms.NMSPacketAccess;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 
@@ -24,21 +27,24 @@ import org.slf4j.Logger;
  *   - Caches chunk packets for reuse as fake chunks
  *   - Prevents client from unloading extended chunks
  *   - Maintains proper view distance for client
-*/
+ */
 @Service
 public class PacketInterceptionService {
 
     private static final Logger logger = org.slf4j.LoggerFactory.getLogger(PacketInterceptionService.class);
-    private final ViewDistanceService viewDistanceService;
+    private final Provider<ViewDistanceService> viewDistanceServiceProvider;
     private final PacketChunkCacheService chunkCache;
+    private final NMSPacketAccess nmsPacketAccess;
     private static final boolean DEBUG = false;
 
     @Inject
     public PacketInterceptionService(
-            ViewDistanceService viewDistanceService,
-            PacketChunkCacheService chunkCache) {
-        this.viewDistanceService = viewDistanceService;
+            Provider<ViewDistanceService> viewDistanceServiceProvider,
+            PacketChunkCacheService chunkCache,
+            NMSPacketAccess nmsPacketAccess) {
+        this.viewDistanceServiceProvider = viewDistanceServiceProvider;
         this.chunkCache = chunkCache;
+        this.nmsPacketAccess = nmsPacketAccess;
     }
 
     @OnEnable
@@ -52,7 +58,7 @@ public class PacketInterceptionService {
                             if (player == null)
                                 return;
 
-                            var view = viewDistanceService.getPlayerView(player.getUniqueId());
+                            var view = viewDistanceServiceProvider.get().getPlayerView(player.getUniqueId());
                             if (view == null)
                                 return;
 
@@ -78,7 +84,7 @@ public class PacketInterceptionService {
                             if (player.getTicksLived() < 100)
                                 return;
 
-                            var view = viewDistanceService.getPlayerView(player.getUniqueId());
+                            var view = viewDistanceServiceProvider.get().getPlayerView(player.getUniqueId());
                             if (view == null)
                                 return;
 
@@ -89,9 +95,9 @@ public class PacketInterceptionService {
                             if (serverRadius < target) {
                                 event.setCancelled(true);
                                 player.getScheduler().run(
-                                        me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.getInstance(), (task) -> {
-                                            ((CraftPlayer) player).getHandle().connection
-                                                    .send(new ClientboundSetChunkCacheRadiusPacket(target));
+                                        ExtendedHorizonsPlugin.getInstance(), (task) -> {
+                                            Object packet = nmsPacketAccess.createChunkCacheRadiusPacket(target);
+                                            nmsPacketAccess.sendPacket(player, packet);
                                         }, null);
                             }
                         } else if (event.getPacketType() == PacketType.Play.Server.CHUNK_DATA) {
@@ -107,10 +113,8 @@ public class PacketInterceptionService {
                                 if (DEBUG && chunkCache.size() % 100 == 0) {
                                     logger.info("[EH] Cached {} real chunks", chunkCache.size());
                                 }
-                            } catch (Throwable ex) {
-                                if (DEBUG) {
-                                    logger.warn("[EH] Error intercepting chunk: {}", ex.getMessage());
-                                }
+                            } catch (Exception ex) {
+                                logger.warn("[EH] Error intercepting chunk: {}", ex.getMessage());
                             }
                         }
                     }
@@ -118,6 +122,29 @@ public class PacketInterceptionService {
 
         if (DEBUG) {
             logger.info("[EH] Packet interception system registered with fake chunk support");
+        }
+    }
+
+    /**
+     * Sends a cached chunk (Column) to the player using PacketEvents.
+     * This method abstracts the PacketEvents usage from FakeChunkService.
+     */
+    public boolean sendCachedChunk(Player player, int chunkX, int chunkZ) {
+        Column column = chunkCache.get(chunkX, chunkZ);
+        if (column == null) {
+            return false;
+        }
+
+        try {
+            WrapperPlayServerChunkData packet = new WrapperPlayServerChunkData(column);
+            PacketEvents.getAPI().getPlayerManager().sendPacket(player, packet);
+            return true;
+        } catch (Exception e) {
+            if (DEBUG) {
+                logger.warn("[EH] Failed to send cached chunk {},{} to {}: {}", chunkX, chunkZ, player.getName(),
+                        e.getMessage());
+            }
+            return false;
         }
     }
 }

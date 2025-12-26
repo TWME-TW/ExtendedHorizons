@@ -5,6 +5,8 @@ import com.thewinterframework.service.annotation.Service;
 import me.mapacheee.extendedhorizons.shared.service.ConfigService;
 import org.bukkit.entity.Player;
 
+import org.bukkit.World.Environment;
+
 @Service
 public class OcclusionCullingService {
 
@@ -29,8 +31,8 @@ public class OcclusionCullingService {
             return false;
         }
 
-        if (player.getWorld().getEnvironment() == org.bukkit.World.Environment.NETHER
-                || player.getWorld().getEnvironment() == org.bukkit.World.Environment.THE_END) {
+        if (player.getWorld().getEnvironment() == Environment.NETHER
+                || player.getWorld().getEnvironment() == Environment.THE_END) {
             return false;
         }
 

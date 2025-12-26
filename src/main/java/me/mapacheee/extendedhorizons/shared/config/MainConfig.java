@@ -48,6 +48,7 @@ public record MainConfig(
                                 @Setting("cache-cleanup-interval") int cacheCleanupInterval,
                                 @Setting("enable-memory-cache") boolean enableMemoryCache,
                                 @Setting("max-memory-cache-size") int maxMemoryCacheSize,
+                                @Setting("packet-cache-ttl-seconds") int packetCacheTtlSeconds,
                                 @Setting("anti-xray") AntiXrayConfig antiXray) {
 
                         @ConfigSerializable

@@ -3,6 +3,7 @@ package me.mapacheee.extendedhorizons.viewdistance.listener;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.thewinterframework.paper.listener.ListenerComponent;
+import me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin;
 import me.mapacheee.extendedhorizons.viewdistance.service.ViewDistanceService;
 import org.bukkit.Bukkit;
 import org.bukkit.event.EventHandler;
@@ -79,8 +80,8 @@ public class PlayerMovementListener implements Listener {
 
         if (cheb >= 3) {
             viewDistanceService.updatePlayerViewFast(event.getPlayer());
-            Bukkit.getScheduler().runTaskLater(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin
-                    .getPlugin(me.mapacheee.extendedhorizons.ExtendedHorizonsPlugin.class), () -> {
+            Bukkit.getScheduler().runTaskLater(ExtendedHorizonsPlugin
+                    .getPlugin(ExtendedHorizonsPlugin.class), () -> {
                         if (event.getPlayer().isOnline())
                             viewDistanceServiceProvider.get().updatePlayerView(event.getPlayer());
                     }, 5L);
